@@ -96,8 +96,9 @@ type Raft struct {
 	// electionTimeoutLeft   int
 	// electionTimeoutRight  int
 
-	lastSendHeartBeat int
-	lastRecvHeartBeat int
+	lastSendHeartBeat int64
+	lastRecvHeartBeat int64
+	electionStartAt   int64
 }
 
 // return currentTerm and whether this server
@@ -292,7 +293,7 @@ func (rf *Raft) isLeader() bool {
 	return rf.role == RoleLeader
 }
 
-func (rf *Raft) checkStartElection(lastRecvHeartBeat int) bool {
+func (rf *Raft) checkStartElection(lastRecvHeartBeat int64) bool {
 	// rf.mu.Lock()
 	// defer rf.mu.Unlock()
 	// if rf.role != RoleFollower {
@@ -307,18 +308,57 @@ func (rf *Raft) checkStartElection(lastRecvHeartBeat int) bool {
 
 func (rf *Raft) startElection() {
 	rf.mu.Lock()
+	rf.role = RoleCandidate
+	rf.currentTerm += 1
+	rf.electionStartAt = time.Now().UnixMilli()
+
+	var votes int32 = 1
+	role := rf.role
 	term := rf.currentTerm
 	candidateId := rf.me
-	// lastLogIndex := rf.l
+
+	var lastLogIndex int
+	var lastLogTerm int
+
+	// first boot, index start from 1
+	if len(rf.log) == 0 {
+		panic("log size is zero")
+	}
+	if len(rf.log) == 1 {
+		if term != 1 {
+			panic("term not 1 when boot")
+		}
+		lastLogIndex = 0
+		lastLogTerm = term - 1
+	} else {
+		lastLogIndex = len(rf.log) - 1
+		lastLogTerm = rf.log[lastLogIndex].Term
+	}
 	rf.mu.Unlock()
 
-	for ix := range rf.peers {
-		if ix == rf.me {
-			continue
+	for {
+		for ix := range rf.peers {
+			if ix == rf.me {
+				continue
+			}
+			go func() {
+				args := RequestVoteArgs{
+					Term: term, CandidateId: candidateId,
+					LastLogIndex: lastLogIndex, LastLogTerm: lastLogTerm}
+				reply := RequestVoteReply{}
+				rc := rf.sendRequestVote(ix, &args, &reply)
+				if rc {
+					if reply.VoteGranted {
+						if reply.Term > term {
+							panic("follower term is bigger than candidate, meanwhile vote granted")
+						}
+						atomic.AddInt32(&votes, 1)
+					}
+				} else {
+					DPrintf("sendRequestVote %d->%d", rf.me, ix)
+				}
+			}()
 		}
-		args := RequestVoteArgs{Term: term, CandidateId: candidateId}
-		reply := RequestVoteReply{}
-		rf.sendRequestVote(ix, &args, &reply)
 	}
 }
 
