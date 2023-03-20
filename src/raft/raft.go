@@ -19,8 +19,10 @@ package raft
 
 import (
 	//	"bytes"
+	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
@@ -54,7 +56,17 @@ const (
 	RoleFollower RoleType = iota
 	RoleCandidate
 	RoleLeader
+
+	SendHeartBeatInterval = 150
+	ElectionTimeout       = 400
+	Delta                 = 200
 )
+
+// log entry struct
+type LogEntry struct {
+	Term    int
+	Command interface{}
+}
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
@@ -72,7 +84,7 @@ type Raft struct {
 	role        RoleType
 	currentTerm int
 	votedFor    int
-	// log
+	log         []LogEntry
 
 	commitIndex int
 	lastApplied int
@@ -80,9 +92,12 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
-	sendHeartBeatInterval int
-	electionTimeoutLeft   int
-	electionTimeoutRight  int
+	// sendHeartBeatInterval int
+	// electionTimeoutLeft   int
+	// electionTimeoutRight  int
+
+	lastSendHeartBeat int
+	lastRecvHeartBeat int
 }
 
 // return currentTerm and whether this server
@@ -156,7 +171,7 @@ type RequestVoteArgs struct {
 	Term         int
 	CandidateId  int
 	LastLogIndex int
-	lastLogTerm  int
+	LastLogTerm  int
 }
 
 // example RequestVote RPC reply structure.
@@ -277,6 +292,40 @@ func (rf *Raft) isLeader() bool {
 	return rf.role == RoleLeader
 }
 
+func (rf *Raft) checkStartElection(lastRecvHeartBeat int) bool {
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
+	// if rf.role != RoleFollower {
+	// return false
+	// }
+	nowMills := time.Now().UnixMilli()
+	if nowMills-int64(lastRecvHeartBeat) > ElectionTimeout {
+		return true
+	}
+	return false
+}
+
+func (rf *Raft) startElection() {
+	rf.mu.Lock()
+	term := rf.currentTerm
+	candidateId := rf.me
+	// lastLogIndex := rf.l
+	rf.mu.Unlock()
+
+	for ix := range rf.peers {
+		if ix == rf.me {
+			continue
+		}
+		args := RequestVoteArgs{Term: term, CandidateId: candidateId}
+		reply := RequestVoteReply{}
+		rf.sendRequestVote(ix, &args, &reply)
+	}
+}
+
+func (rf *Raft) sendHeartBeat() {
+
+}
+
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
@@ -287,14 +336,21 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 
 		rf.mu.Lock()
-		if rf.isLeader() {
-			for _, client := range rf.peers {
-				client.Call("Raft.AppendEntries", &args, &reply)
+		role := rf.role
+		lastRecvHeartBeat := rf.lastRecvHeartBeat
+		rf.mu.Unlock()
+
+		if role == RoleLeader {
+			go rf.sendHeartBeat()
+		} else if role == RoleFollower {
+			if rf.checkStartElection(lastRecvHeartBeat) {
+				go rf.startElection()
+			} else {
+				span := rand.Intn(Delta) + ElectionTimeout
+				time.Sleep(time.Duration(span) * time.Millisecond)
 			}
 		} else {
 		}
-		rf.mu.Unlock()
-
 	}
 }
 
@@ -324,10 +380,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
-
-	rf.sendHeartBeatInterval = 150
-	rf.electionTimeoutLeft = 250
-	rf.electionTimeoutRight = 500
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
