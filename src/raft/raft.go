@@ -84,6 +84,7 @@ type Raft struct {
 	role        RoleType
 	currentTerm int
 	votedFor    int
+	leaderId    int
 	log         []LogEntry
 
 	commitIndex int
@@ -97,7 +98,7 @@ type Raft struct {
 	// electionTimeoutRight  int
 
 	lastSendHeartBeat int64
-	lastRecvHeartBeat int64
+	lastFromLeaderAt  int64
 	electionStartAt   int64
 }
 
@@ -221,14 +222,15 @@ func (rf *Raft) ticker() {
 
 		rf.mu.Lock()
 		role := rf.role
-		lastRecvHeartBeat := rf.lastRecvHeartBeat
+		lastFromLeaderAt := rf.lastFromLeaderAt
 		rf.mu.Unlock()
 
 		if role == RoleLeader {
-			go rf.sendHeartBeat()
+			rf.sendHeartBeat()
+			time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
 		} else if role == RoleFollower {
-			if rf.checkStartElection(lastRecvHeartBeat) {
-				go rf.startElection()
+			if rf.leaderHang(lastFromLeaderAt) {
+				rf.startElection()
 			} else {
 				span := rand.Intn(Delta) + ElectionTimeout
 				time.Sleep(time.Duration(span) * time.Millisecond)
@@ -259,6 +261,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = RoleFollower
 	rf.currentTerm = 0
 	rf.votedFor = -1
+	rf.leaderId = -1
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 
