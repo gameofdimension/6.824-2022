@@ -23,7 +23,7 @@ func (rf *Raft) sendHeartBeat() {
 	}
 }
 
-func (rf *Raft) syncLog(server int, leaderId int, currentTerm int,
+func (rf *Raft) syncLog(ch chan bool, server int, leaderId int, currentTerm int,
 	leaderCommit int, entries *[]LogEntry, preLogIndex int, preLogTerm int) {
 	args := AppendEntriesArgs{Term: currentTerm, LeaderId: leaderId, PrevLogIndex: preLogIndex,
 		PrevLogTerm: preLogTerm, Entries: *entries, LeaderCommit: leaderCommit}
@@ -31,17 +31,27 @@ func (rf *Raft) syncLog(server int, leaderId int, currentTerm int,
 	rc := rf.sendAppendEntries(server, &args, &reply)
 	if !rc {
 		DPrintf("sendAppendEntries rpc fail %t", rc)
+		ch <- false
 		return
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		
+		DPrintf("sendAppendEntries becomeFollower, %d vs %d", reply.Term, rf.currentTerm)
+		rf.becomeFollower(reply.Term)
+		ch <- false
+		return
 	}
 	if !reply.Success {
 		DPrintf("sendAppendEntries process fail %t", reply.Success)
+		rf.nextIndex[server] -= 1
+		ch <- false
+		return
 	}
+	rf.matchIndex[server] = preLogIndex + len(*entries)
+	rf.nextIndex[server] = rf.matchIndex[server] + 1
+	ch <- true
 }
 
 func (rf *Raft) replicate(startTerm int) {
@@ -67,7 +77,8 @@ func (rf *Raft) replicate(startTerm int) {
 			return
 		}
 
-		idleCount := 0
+		rpcCount := 0
+		ch := make(chan bool)
 		for idx := range rf.peers {
 			if idx == self {
 				continue
@@ -79,18 +90,52 @@ func (rf *Raft) replicate(startTerm int) {
 			preLogTerm := log[preLogIndex].Term
 			entries := log[nextIndex[idx]:]
 			if len(entries) == 0 {
-				idleCount += 1
 				continue
 			}
-			go rf.syncLog(idx, self, currentTerm, leaderCommit, &entries, preLogIndex, preLogTerm)
+			rpcCount += 1
+			go rf.syncLog(ch, idx, self, currentTerm, leaderCommit, &entries, preLogIndex, preLogTerm)
 		}
-		if idleCount+1 == len(rf.peers) {
+		if rpcCount == 0 {
 			time.Sleep(10 * time.Millisecond)
+		} else {
+			count := 0
+			for {
+				if count >= rpcCount {
+					break
+				}
+				select {
+				case val := <-ch:
+					DPrintf("syncLog return %t", val)
+					count += 1
+				}
+			}
 		}
 		rf.tryUpdateCommitIndex()
 	}
 }
 
 func (rf *Raft) tryUpdateCommitIndex() {
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	for idx := len(rf.log) - 1; idx > rf.commitIndex; idx -= 1 {
+		if rf.log[idx].Term < rf.currentTerm {
+			break
+		}
+		if rf.log[idx].Term > rf.currentTerm {
+			continue
+		}
+		matchCount := 1
+		for i, m := range rf.matchIndex {
+			if i == rf.me {
+				continue
+			}
+			if m >= idx {
+				matchCount += 1
+			}
+		}
+		if 2*matchCount > len(rf.peers) {
+			rf.commitIndex = idx
+			break
+		}
+	}
 }

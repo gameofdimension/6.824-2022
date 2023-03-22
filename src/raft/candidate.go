@@ -90,9 +90,14 @@ func (rf *Raft) newSession(elected chan<- bool) {
 	}
 }
 
-func (rf *Raft) startElection() {
+func (rf *Raft) becomeCandidate() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.role = RoleCandidate
+}
 
+func (rf *Raft) startElection() {
+	rf.becomeCandidate()
 	for {
 		rf.mu.Lock()
 		role := rf.role
