@@ -23,8 +23,8 @@ func isMoreUpToDate(aTerm int, aIndex int, bTerm int, bIndex int) bool {
 }
 
 func min(a, b int) int {
-    if a < b {
-        return a
-    }
-    return b
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -109,8 +109,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	term = rf.currentTerm
-	isleader = rf.isLeader()
+	isleader = rf.role == RoleLeader
 	return term, isleader
 }
 
@@ -207,10 +209,6 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) isLeader() bool {
-	return rf.role == RoleLeader
-}
-
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
@@ -236,6 +234,7 @@ func (rf *Raft) ticker() {
 				time.Sleep(time.Duration(span) * time.Millisecond)
 			}
 		} else {
+			time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
 		}
 	}
 }
@@ -265,7 +264,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 
+	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm})
 	rf.nextIndex = make([]int, len(peers))
+	for idx := range rf.nextIndex {
+		rf.nextIndex[idx] = len(rf.log)
+	}
 	rf.matchIndex = make([]int, len(peers))
 
 	// initialize from state persisted before a crash

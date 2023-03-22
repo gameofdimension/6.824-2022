@@ -1,69 +1,155 @@
 package raft
 
 import (
-	"sync/atomic"
+	"math/rand"
 	"time"
 )
 
-func (rf *Raft) startElection() {
-	// if term >= rf.currentTerm {
-	// 	rf.currentTerm = term
-	// 	rf.votedFor = -1
-	// 	rf.leaderId = args.LeaderId
-	// 	rf.role = RoleFollower
-	// }
+func (rf *Raft) newSession(elected chan<- bool) {
 	rf.mu.Lock()
-	rf.role = RoleCandidate
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.leaderId = -1
 
-	rf.electionStartAt = time.Now().UnixMilli()
-	var votes int32 = 1
 	term := rf.currentTerm
 	candidateId := rf.me
-
-	// var lastLogIndex int
-	// var lastLogTerm int
-
-	// // first boot, index start from 1
-	// if len(rf.log) == 0 {
-	// 	panic("log size is zero")
-	// }
-	// if len(rf.log) == 1 {
-	// 	if term != 1 {
-	// 		panic("term not 1 when boot")
-	// 	}
-	// 	lastLogIndex = 0
-	// 	lastLogTerm = term - 1
-	// } else {
-	// 	lastLogIndex = len(rf.log) - 1
-	// 	lastLogTerm = rf.log[lastLogIndex].Term
-	// }
+	lastLogIndex := len(rf.log) - 1
+	lastLogTerm := rf.log[lastLogIndex].Term
 	rf.mu.Unlock()
 
-	for {
-		for ix := range rf.peers {
-			if ix == rf.me {
-				continue
-			}
-			go func() {
-				args := RequestVoteArgs{
-					Term: term, CandidateId: candidateId,
-					LastLogIndex: lastLogIndex, LastLogTerm: lastLogTerm}
-				reply := RequestVoteReply{}
-				rc := rf.sendRequestVote(ix, &args, &reply)
-				if rc {
-					if reply.VoteGranted {
-						if reply.Term > term {
-							panic("follower term is bigger than candidate, meanwhile vote granted")
-						}
-						atomic.AddInt32(&votes, 1)
+	votes := 1
+
+	result := make(chan int)
+	for ix := range rf.peers {
+		if ix == rf.me {
+			continue
+		}
+		go func(server int, ch chan<- int) {
+			args := RequestVoteArgs{
+				Term: term, CandidateId: candidateId,
+				LastLogIndex: lastLogIndex, LastLogTerm: lastLogTerm}
+			reply := RequestVoteReply{}
+			rc := rf.sendRequestVote(server, &args, &reply)
+			if rc {
+				if reply.VoteGranted {
+					if reply.Term > term {
+						panic("follower term is bigger than candidate, meanwhile vote granted")
 					}
+					DPrintf("sendRequestVote granted %d->%d", rf.me, server)
+					ch <- 0
+					return
 				} else {
-					DPrintf("sendRequestVote %d->%d", rf.me, ix)
+					if reply.Term > term {
+						DPrintf("sendRequestVote degraded %d->%d", rf.me, server)
+
+						rf.mu.Lock()
+						rf.role = RoleFollower
+						rf.currentTerm = term
+						rf.votedFor = -1
+						rf.leaderId = -1
+						rf.mu.Unlock()
+
+						ch <- -1
+						return
+					} else {
+						DPrintf("sendRequestVote not granted %d->%d", rf.me, server)
+						ch <- 1
+						return
+					}
 				}
-			}()
+			} else {
+				DPrintf("sendRequestVote fail %d->%d", rf.me, server)
+				ch <- 2
+				return
+			}
+		}(ix, result)
+	}
+
+	count := 0
+	for {
+		if count >= len(rf.peers)-1 {
+			elected <- false
+			return
+		}
+		select {
+		case ret := <-result:
+			count += 1
+			DPrintf("collect %d, %d vote result", count, ret)
+			if ret < 0 {
+				elected <- false
+				return
+			}
+			if ret == 0 {
+				votes += 1
+				if votes*2 > len(rf.peers) {
+					elected <- true
+					return
+				}
+			}
 		}
 	}
+}
+
+func (rf *Raft) startElection() {
+	rf.role = RoleCandidate
+
+	for {
+		rf.mu.Lock()
+		role := rf.role
+		rf.mu.Unlock()
+
+		if role != RoleCandidate {
+			break
+		}
+		elected := make(chan bool)
+		rf.electionStartAt = time.Now().UnixMilli()
+		go rf.newSession(elected)
+
+		span := rand.Intn(Delta) + ElectionTimeout
+		select {
+		case ret := <-elected:
+			DPrintf("election start at: %d, end at: %d, ret: %t", rf.electionStartAt, time.Now().UnixMilli(), ret)
+			if ret {
+				rf.mu.Lock()
+				rf.role = RoleLeader
+				for i := range rf.nextIndex {
+					rf.nextIndex[i] = len(rf.log)
+					rf.matchIndex[i] = 0
+				}
+				rf.mu.Unlock()
+			} else {
+				time.Sleep(time.Duration(span) * time.Millisecond)
+			}
+		case <-time.After(time.Duration(span) * time.Millisecond):
+		}
+	}
+	// rf.mu.Lock()
+	// rf.role = RoleCandidate
+	// rf.currentTerm += 1
+	// rf.votedFor = rf.me
+	// rf.leaderId = -1
+
+	// var votes int32 = 1
+	// term := rf.currentTerm
+	// candidateId := rf.me
+
+	// // var lastLogIndex int
+	// // var lastLogTerm int
+
+	// // // first boot, index start from 1
+	// // if len(rf.log) == 0 {
+	// // 	panic("log size is zero")
+	// // }
+	// // if len(rf.log) == 1 {
+	// // 	if term != 1 {
+	// // 		panic("term not 1 when boot")
+	// // 	}
+	// // 	lastLogIndex = 0
+	// // 	lastLogTerm = term - 1
+	// // } else {
+	// // 	lastLogIndex = len(rf.log) - 1
+	// // 	lastLogTerm = rf.log[lastLogIndex].Term
+	// // }
+	// rf.mu.Unlock()
+
 }

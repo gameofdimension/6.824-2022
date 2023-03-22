@@ -22,11 +22,11 @@ type RequestVoteReply struct {
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	DPrintf("role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.CandidateId)
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
+		rf.role, rf.currentTerm, rf.me, args.Term, args.CandidateId)
 
 	term := args.Term
 	if term > rf.currentTerm {
@@ -104,10 +104,10 @@ type AppendEntriesReply struct {
 
 // AppendEntries RPC handler.
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	DPrintf("role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
+		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId)
 
 	term := args.Term
 	if term >= rf.currentTerm {
@@ -128,7 +128,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
-	
+
 	leaderPrevLogIndex := args.PrevLogIndex
 	leaderPrevLogTerm := args.PrevLogTerm
 	if leaderPrevLogIndex >= len(rf.log) {
