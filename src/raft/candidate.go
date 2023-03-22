@@ -123,33 +123,4 @@ func (rf *Raft) startElection() {
 		case <-time.After(time.Duration(span) * time.Millisecond):
 		}
 	}
-	// rf.mu.Lock()
-	// rf.role = RoleCandidate
-	// rf.currentTerm += 1
-	// rf.votedFor = rf.me
-	// rf.leaderId = -1
-
-	// var votes int32 = 1
-	// term := rf.currentTerm
-	// candidateId := rf.me
-
-	// // var lastLogIndex int
-	// // var lastLogTerm int
-
-	// // // first boot, index start from 1
-	// // if len(rf.log) == 0 {
-	// // 	panic("log size is zero")
-	// // }
-	// // if len(rf.log) == 1 {
-	// // 	if term != 1 {
-	// // 		panic("term not 1 when boot")
-	// // 	}
-	// // 	lastLogIndex = 0
-	// // 	lastLogTerm = term - 1
-	// // } else {
-	// // 	lastLogIndex = len(rf.log) - 1
-	// // 	lastLogTerm = rf.log[lastLogIndex].Term
-	// // }
-	// rf.mu.Unlock()
-
 }
