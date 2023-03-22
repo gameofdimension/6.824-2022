@@ -181,12 +181,17 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	index := len(rf.log)
+	term := rf.currentTerm
+	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+	isLeader := rf.role == RoleLeader
 
 	// Your code here (2B).
-
+	if rf.killed() {
+		return index, term, false
+	}
 	return index, term, isLeader
 }
 

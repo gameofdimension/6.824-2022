@@ -30,9 +30,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	term := args.Term
 	if term > rf.currentTerm {
-		rf.currentTerm = term
-		rf.votedFor = -1
-		rf.role = RoleFollower
+		rf.becomeFollower(term)
 	}
 
 	if rf.role == RoleFollower {
@@ -102,6 +100,12 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
+func (rf *Raft) becomeFollower(term int) {
+	rf.currentTerm = term
+	rf.votedFor = -1
+	rf.role = RoleFollower
+}
+
 // AppendEntries RPC handler.
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
@@ -111,10 +115,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	term := args.Term
 	if term >= rf.currentTerm {
-		rf.currentTerm = term
-		rf.votedFor = -1
+		rf.becomeFollower(term)
 		rf.leaderId = args.LeaderId
-		rf.role = RoleFollower
 	}
 	if rf.role != RoleFollower {
 		reply.Success = false

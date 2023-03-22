@@ -110,17 +110,22 @@ func (rf *Raft) startElection() {
 		case ret := <-elected:
 			DPrintf("election start at: %d, end at: %d, ret: %t", rf.electionStartAt, time.Now().UnixMilli(), ret)
 			if ret {
-				rf.mu.Lock()
-				rf.role = RoleLeader
-				for i := range rf.nextIndex {
-					rf.nextIndex[i] = len(rf.log)
-					rf.matchIndex[i] = 0
-				}
-				rf.mu.Unlock()
+				rf.becomeLeader()
 			} else {
 				time.Sleep(time.Duration(span) * time.Millisecond)
 			}
 		case <-time.After(time.Duration(span) * time.Millisecond):
 		}
 	}
+}
+
+func (rf *Raft) becomeLeader() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.role = RoleLeader
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = len(rf.log)
+		rf.matchIndex[i] = 0
+	}
+	go rf.replicate(rf.currentTerm)
 }
