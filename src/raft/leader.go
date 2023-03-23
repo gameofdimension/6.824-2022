@@ -4,10 +4,9 @@ import "time"
 
 func (rf *Raft) sendHeartBeat() bool {
 	rf.mu.Lock()
-	role := rf.role
-	rf.mu.Unlock()
+	defer rf.mu.Unlock()
 
-	if role != RoleLeader {
+	if rf.role != RoleLeader {
 		return false
 	}
 
@@ -145,7 +144,7 @@ func (rf *Raft) heartBeatWorker() {
 	for rf.killed() == false {
 		rc := rf.sendHeartBeat()
 		if !rc {
-			time.Sleep(9 * time.Millisecond)
+			time.Sleep(7 * time.Millisecond)
 		} else {
 			time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
 		}

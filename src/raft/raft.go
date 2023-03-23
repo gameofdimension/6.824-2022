@@ -232,10 +232,6 @@ func (rf *Raft) ticker() {
 		lastFromLeaderAt := rf.lastFromLeaderAt
 		rf.mu.Unlock()
 
-		// if role == RoleLeader {
-		// 	rf.sendHeartBeat()
-		// 	time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
-		// } else
 		if role == RoleFollower {
 			if rf.leaderHang(lastFromLeaderAt) {
 				rf.startElection()
