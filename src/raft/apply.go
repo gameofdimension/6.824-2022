@@ -24,4 +24,30 @@ func (rf *Raft) applyLog() {
 
 func (rf *Raft) spawnWorker() {
 	go rf.applyLog()
+	rf.spawnLeaderWorker()
+}
+
+func (rf *Raft) replicateWorker(server int) {
+
+}
+
+func (rf *Raft) commitIndexWorker() {
+	for rf.killed() == false {
+		rc := rf.tryUpdateCommitIndex()
+		if rc < 0 {
+			time.Sleep(10 * time.Millisecond)
+		} else {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+func (rf *Raft) spawnLeaderWorker() {
+	go rf.commitIndexWorker()
+	for idx := range rf.peers {
+		if idx == rf.me {
+			continue
+		}
+		go rf.replicateWorker(idx)
+	}
 }

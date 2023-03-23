@@ -80,7 +80,7 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	// isleader    bool
+	applyCh     chan ApplyMsg
 	role        RoleType
 	currentTerm int
 	votedFor    int
@@ -185,13 +185,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 	index := len(rf.log)
 	term := rf.currentTerm
-	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
-	isLeader := rf.role == RoleLeader
-
-	// Your code here (2B).
 	if rf.killed() {
 		return index, term, false
 	}
+	isLeader := rf.role == RoleLeader
+	if !isLeader {
+		return index, term, isLeader
+	}
+
+	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+
+	// Your code here (2B).
 	return index, term, isLeader
 }
 
@@ -261,7 +265,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-	// rf.isleader = false
+	rf.applyCh = applyCh
 	rf.role = RoleFollower
 	rf.currentTerm = 0
 	rf.votedFor = -1
@@ -275,6 +279,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.nextIndex[idx] = len(rf.log)
 	}
 	rf.matchIndex = make([]int, len(peers))
+
+	rf.spawnWorker()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

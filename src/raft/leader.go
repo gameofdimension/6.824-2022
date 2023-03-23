@@ -114,9 +114,12 @@ func (rf *Raft) replicate(startTerm int) {
 	}
 }
 
-func (rf *Raft) tryUpdateCommitIndex() {
+func (rf *Raft) tryUpdateCommitIndex() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if rf.role != RoleLeader {
+		return -1
+	}
 	for idx := len(rf.log) - 1; idx > rf.commitIndex; idx -= 1 {
 		if rf.log[idx].Term < rf.currentTerm {
 			break
@@ -135,7 +138,8 @@ func (rf *Raft) tryUpdateCommitIndex() {
 		}
 		if 2*matchCount > len(rf.peers) {
 			rf.commitIndex = idx
-			break
+			return 0
 		}
 	}
+	return 1
 }
