@@ -125,8 +125,8 @@ func firstIndexOfTerm(log []LogEntry, from int) int {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId)
+	DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d",
+		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
 
 	term := args.Term
 	if term >= rf.currentTerm {
@@ -151,6 +151,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if leaderPrevLogIndex >= len(rf.log) {
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		reply.XTerm = 0
+		reply.XIndex = 0
 		reply.XLen = len(rf.log)
 		return
 	}
