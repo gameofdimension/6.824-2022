@@ -197,6 +197,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, isLeader
 	}
 
+	DPrintf("%d add command %v at term %d", rf.me, command, term)
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
 	rf.persist()
 
