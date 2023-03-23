@@ -27,36 +27,38 @@ func (rf *Raft) newSession(elected chan<- bool) {
 		}
 		go func(server int, ch chan<- int) {
 			args := RequestVoteArgs{
-				Term: term, CandidateId: candidateId,
-				LastLogIndex: lastLogIndex, LastLogTerm: lastLogTerm}
+				Term:         term,
+				CandidateId:  candidateId,
+				LastLogIndex: lastLogIndex,
+				LastLogTerm:  lastLogTerm,
+			}
 			reply := RequestVoteReply{}
 			rc := rf.sendRequestVote(server, &args, &reply)
 			if rc {
+				if reply.Term > term {
+					DPrintf("sendRequestVote degraded %d->%d", rf.me, server)
+					rf.mu.Lock()
+					rf.becomeFollower(reply.Term)
+					rf.leaderId = -1
+					rf.mu.Unlock()
+
+					ch <- -1
+					return
+				}
 				if reply.VoteGranted {
 					if reply.Term > term {
 						panic("follower term is bigger than candidate, meanwhile vote granted")
 					}
-					DPrintf("sendRequestVote granted %d->%d", rf.me, server)
+					DPrintf("sendRequestVote granted %d->%d", server, rf.me)
 					ch <- 0
 					return
 				} else {
-					if reply.Term > term {
-						DPrintf("sendRequestVote degraded %d->%d", rf.me, server)
-						rf.mu.Lock()
-						rf.becomeFollower(term)
-						rf.leaderId = -1
-						rf.mu.Unlock()
-
-						ch <- -1
-						return
-					} else {
-						DPrintf("sendRequestVote not granted %d->%d", rf.me, server)
-						ch <- 1
-						return
-					}
+					DPrintf("sendRequestVote not granted %d->%d", server, rf.me)
+					ch <- 1
+					return
 				}
 			} else {
-				DPrintf("sendRequestVote fail %d->%d", rf.me, server)
+				DPrintf("sendRequestVote fail %d->%d", server, rf.me)
 				ch <- 2
 				return
 			}
@@ -64,7 +66,7 @@ func (rf *Raft) newSession(elected chan<- bool) {
 	}
 
 	count := 0
-	for {
+	for rf.killed() == false {
 		if count >= len(rf.peers)-1 {
 			elected <- false
 			return
@@ -96,7 +98,7 @@ func (rf *Raft) becomeCandidate() {
 
 func (rf *Raft) startElection() {
 	rf.becomeCandidate()
-	for {
+	for rf.killed() == false {
 		rf.mu.Lock()
 		role := rf.role
 		rf.mu.Unlock()
@@ -130,5 +132,5 @@ func (rf *Raft) becomeLeader() {
 		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
-	DPrintf("%d become leader", rf.me)
+	DPrintf("%d become leader of term %d", rf.me, rf.currentTerm)
 }
