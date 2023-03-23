@@ -183,7 +183,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.persist()
 	leaderCommit := args.LeaderCommit
 	if leaderCommit > rf.commitIndex {
-		rf.commitIndex = min(leaderCommit, args.PrevLogIndex+len(args.Entries))
+		newVal := min(leaderCommit, args.PrevLogIndex+len(args.Entries))
+		DPrintf("follower %d update commit index %d->%d, %v", rf.me, rf.commitIndex, newVal, rf.log)
+		rf.commitIndex = newVal
 	}
 	reply.Success = true
 	reply.Term = rf.currentTerm
