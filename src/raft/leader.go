@@ -40,6 +40,10 @@ func (rf *Raft) syncLog(server int) int {
 		return -1
 	}
 
+	if len(entries) <= 0 {
+		return -2
+	}
+
 	args := AppendEntriesArgs{
 		Term:         currentTerm,
 		LeaderId:     self,
