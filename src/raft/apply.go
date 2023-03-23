@@ -21,36 +21,3 @@ func (rf *Raft) applyLog() {
 		}
 	}
 }
-
-func (rf *Raft) spawnWorker() {
-	go rf.applyLog()
-	rf.spawnLeaderWorker()
-}
-
-func (rf *Raft) replicateWorker(server int) {
-	for rf.killed() == false {
-		rc := rf.syncLog(server)
-		if rc < 0 {
-			time.Sleep(53 * time.Millisecond)
-		} else {
-			time.Sleep(11 * time.Millisecond)
-		}
-	}
-}
-
-func (rf *Raft) commitIndexWorker() {
-	for rf.killed() == false {
-		rf.tryUpdateCommitIndex()
-		time.Sleep(47 * time.Millisecond)
-	}
-}
-
-func (rf *Raft) spawnLeaderWorker() {
-	go rf.commitIndexWorker()
-	for idx := range rf.peers {
-		if idx == rf.me {
-			continue
-		}
-		go rf.replicateWorker(idx)
-	}
-}

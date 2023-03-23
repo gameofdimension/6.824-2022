@@ -232,10 +232,11 @@ func (rf *Raft) ticker() {
 		lastFromLeaderAt := rf.lastFromLeaderAt
 		rf.mu.Unlock()
 
-		if role == RoleLeader {
-			rf.sendHeartBeat()
-			time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
-		} else if role == RoleFollower {
+		// if role == RoleLeader {
+		// 	rf.sendHeartBeat()
+		// 	time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
+		// } else
+		if role == RoleFollower {
 			if rf.leaderHang(lastFromLeaderAt) {
 				rf.startElection()
 			} else {
@@ -265,6 +266,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rand.Seed(42)
 	rf.applyCh = applyCh
 	rf.role = RoleFollower
 	rf.currentTerm = 0
@@ -289,4 +291,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	go rf.ticker()
 
 	return rf
+}
+
+func (rf *Raft) spawnWorker() {
+	go rf.applyLog()
+	rf.spawnLeaderWorker()
 }

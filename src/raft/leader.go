@@ -1,6 +1,16 @@
 package raft
 
-func (rf *Raft) sendHeartBeat() {
+import "time"
+
+func (rf *Raft) sendHeartBeat() bool {
+	rf.mu.Lock()
+	role := rf.role
+	rf.mu.Unlock()
+
+	if role != RoleLeader {
+		return false
+	}
+
 	for idx := range rf.peers {
 		if idx == rf.me {
 			continue
@@ -10,15 +20,21 @@ func (rf *Raft) sendHeartBeat() {
 			entries := make([]LogEntry, 0)
 			logIdx := len(rf.log) - 1
 			logTerm := rf.log[logIdx].Term
-			args := AppendEntriesArgs{Term: rf.currentTerm, LeaderId: rf.me,
-				PrevLogIndex: logIdx, PrevLogTerm: logTerm, Entries: entries,
-				LeaderCommit: rf.commitIndex}
+			args := AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: logIdx,
+				PrevLogTerm:  logTerm,
+				Entries:      entries,
+				LeaderCommit: rf.commitIndex,
+			}
 			rf.mu.Unlock()
 
 			reply := AppendEntriesReply{}
 			rf.sendAppendEntries(server, &args, &reply)
 		}(idx)
 	}
+	return true
 }
 
 func (rf *Raft) syncLog(server int) int {
@@ -105,4 +121,45 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 		}
 	}
 	return 1
+}
+
+func (rf *Raft) replicateWorker(server int) {
+	for rf.killed() == false {
+		rc := rf.syncLog(server)
+		if rc < 0 {
+			time.Sleep(53 * time.Millisecond)
+		} else {
+			time.Sleep(11 * time.Millisecond)
+		}
+	}
+}
+
+func (rf *Raft) commitIndexWorker() {
+	for rf.killed() == false {
+		rf.tryUpdateCommitIndex()
+		time.Sleep(47 * time.Millisecond)
+	}
+}
+
+func (rf *Raft) heartBeatWorker() {
+	for rf.killed() == false {
+		rc := rf.sendHeartBeat()
+		if !rc {
+			time.Sleep(9 * time.Millisecond)
+		} else {
+			time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
+		}
+	}
+}
+
+func (rf *Raft) spawnLeaderWorker() {
+	go rf.heartBeatWorker()
+	go rf.commitIndexWorker()
+
+	for idx := range rf.peers {
+		if idx == rf.me {
+			continue
+		}
+		go rf.replicateWorker(idx)
+	}
 }
