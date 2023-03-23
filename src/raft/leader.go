@@ -1,6 +1,9 @@
 package raft
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 func (rf *Raft) sendHeartBeat() bool {
 	rf.mu.Lock()
@@ -39,16 +42,21 @@ func (rf *Raft) sendHeartBeat() bool {
 func (rf *Raft) syncLog(server int) int {
 	rf.mu.Lock()
 	role := rf.role
+	if role != RoleLeader {
+		rf.mu.Unlock()
+		return -1
+	}
 	self := rf.me
 	currentTerm := rf.currentTerm
 	leaderCommit := rf.commitIndex
-	// https://github.com/go101/go101/wiki/How-to-perfectly-clone-a-slice%3F
-	nextIndex := append(rf.nextIndex[:0:0], rf.nextIndex...)
-	// matchIndex := append(rf.matchIndex[:0:0], rf.matchIndex...)
 
-	preLogIndex := nextIndex[server] - 1
+	preLogIndex := rf.nextIndex[server] - 1
+	if rf.nextIndex[server] > len(rf.log) {
+		panic(fmt.Sprintf("inspect next index %d ,%d vs %d, %t, %d\n",
+			len(rf.log), rf.me, server, role == RoleLeader, rf.nextIndex[server]))
+	}
 	preLogTerm := rf.log[preLogIndex].Term
-	entries := rf.log[nextIndex[server]:]
+	entries := rf.log[rf.nextIndex[server]:]
 	rf.mu.Unlock()
 
 	if role != RoleLeader {
@@ -83,7 +91,11 @@ func (rf *Raft) syncLog(server int) int {
 	}
 	if !reply.Success {
 		DPrintf("sendAppendEntries process fail %t", reply.Success)
-		rf.nextIndex[server] = rf.computeNextIndex(reply.XTerm, reply.XIndex, reply.XLen)
+		next := rf.computeNextIndex(reply.XTerm, reply.XIndex, reply.XLen, preLogIndex)
+		rf.nextIndex[server] = next
+		if rf.nextIndex[server] > len(rf.log) {
+			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], len(rf.log)))
+		}
 		if rf.nextIndex[server] < 1 {
 			rf.nextIndex[server] = 1
 		}
@@ -91,12 +103,15 @@ func (rf *Raft) syncLog(server int) int {
 	}
 	rf.matchIndex[server] = preLogIndex + len(entries)
 	rf.nextIndex[server] = rf.matchIndex[server] + 1
+	if rf.nextIndex[server] > len(rf.log) {
+		panic(fmt.Sprintf("nextIndex fail %d, %d, %d\n", server, rf.nextIndex[server], len(rf.log)))
+	}
 	return 0
 }
 
-func lastIndexOfTerm(log []LogEntry, term int) int {
+func lastIndexOfTerm(log []LogEntry, term int, preLogIndex int) int {
 	res := -1
-	for i := len(log) - 1; i >= 0; i -= 1 {
+	for i := preLogIndex; i >= 0; i -= 1 {
 		if log[i].Term == term {
 			return i
 		}
@@ -107,11 +122,11 @@ func lastIndexOfTerm(log []LogEntry, term int) int {
 	return res
 }
 
-func (rf *Raft) computeNextIndex(xTerm int, xIndex int, Xlen int) int {
+func (rf *Raft) computeNextIndex(xTerm int, xIndex int, Xlen int, preLogIndex int) int {
 	if xTerm <= 0 {
 		return Xlen
 	}
-	index := lastIndexOfTerm(rf.log, xTerm)
+	index := lastIndexOfTerm(rf.log, xTerm, preLogIndex)
 	if index < 0 {
 		return xIndex
 	}
@@ -141,7 +156,7 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 			}
 		}
 		if 2*matchCount > len(rf.peers) {
-			DPrintf("leader %d update commit index %d", rf.me, idx)
+			DPrintf("leader %d update commit index %d, %v", rf.me, idx, rf.log)
 			rf.commitIndex = idx
 			return 0
 		}
