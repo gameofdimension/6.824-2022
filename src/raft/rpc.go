@@ -25,7 +25,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
+	DPrintf("RequestVote role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
 		rf.role, rf.currentTerm, rf.me, args.Term, args.CandidateId)
 
 	term := args.Term
@@ -110,7 +110,7 @@ func (rf *Raft) becomeFollower(term int) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
+	DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
 		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId)
 
 	term := args.Term
