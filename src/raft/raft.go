@@ -97,10 +97,6 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
-	// sendHeartBeatInterval int
-	// electionTimeoutLeft   int
-	// electionTimeoutRight  int
-
 	lastSendHeartBeat int64
 	lastFromLeaderAt  int64
 	electionStartAt   int64
@@ -289,10 +285,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.log = append(rf.log, LogEntry{Term: rf.currentTerm})
 	}
 	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
 	for idx := range rf.nextIndex {
 		rf.nextIndex[idx] = len(rf.log)
+		rf.matchIndex[idx] = 0
 	}
-	rf.matchIndex = make([]int, len(peers))
 
 	rf.spawnWorker()
 	// start ticker goroutine to start elections
