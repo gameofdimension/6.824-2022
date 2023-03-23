@@ -133,5 +133,4 @@ func (rf *Raft) becomeLeader() {
 		rf.matchIndex[i] = 0
 	}
 	DPrintf("%d become leader", rf.me)
-	go rf.replicate(rf.currentTerm)
 }

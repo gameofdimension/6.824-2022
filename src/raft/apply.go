@@ -3,7 +3,7 @@ package raft
 import "time"
 
 func (rf *Raft) applyLog() {
-	for {
+	for rf.killed() == false {
 		rf.mu.Lock()
 		idle := true
 		if rf.commitIndex > rf.lastApplied {
@@ -28,17 +28,20 @@ func (rf *Raft) spawnWorker() {
 }
 
 func (rf *Raft) replicateWorker(server int) {
-
+	for rf.killed() == false {
+		rc := rf.syncLog(server)
+		if rc < 0 {
+			time.Sleep(53 * time.Millisecond)
+		} else {
+			time.Sleep(11 * time.Millisecond)
+		}
+	}
 }
 
 func (rf *Raft) commitIndexWorker() {
 	for rf.killed() == false {
-		rc := rf.tryUpdateCommitIndex()
-		if rc < 0 {
-			time.Sleep(10 * time.Millisecond)
-		} else {
-			time.Sleep(50 * time.Millisecond)
-		}
+		rf.tryUpdateCommitIndex()
+		time.Sleep(47 * time.Millisecond)
 	}
 }
 
