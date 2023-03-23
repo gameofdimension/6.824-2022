@@ -202,6 +202,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+	rf.persist()
 
 	// Your code here (2B).
 	return index, term, isLeader

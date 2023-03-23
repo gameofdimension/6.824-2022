@@ -15,6 +15,7 @@ func (rf *Raft) newSession(elected chan<- bool) {
 	candidateId := rf.me
 	lastLogIndex := len(rf.log) - 1
 	lastLogTerm := rf.log[lastLogIndex].Term
+	rf.persist()
 	rf.mu.Unlock()
 
 	votes := 1
@@ -41,11 +42,8 @@ func (rf *Raft) newSession(elected chan<- bool) {
 				} else {
 					if reply.Term > term {
 						DPrintf("sendRequestVote degraded %d->%d", rf.me, server)
-
 						rf.mu.Lock()
-						rf.role = RoleFollower
-						rf.currentTerm = term
-						rf.votedFor = -1
+						rf.becomeFollower(term)
 						rf.leaderId = -1
 						rf.mu.Unlock()
 

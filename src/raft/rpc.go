@@ -104,6 +104,7 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.role = RoleFollower
+	rf.persist()
 }
 
 // AppendEntries RPC handler.
@@ -159,6 +160,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		index += 1
 	}
+	rf.persist()
 	leaderCommit := args.LeaderCommit
 	if leaderCommit > rf.commitIndex {
 		rf.commitIndex = min(leaderCommit, args.PrevLogIndex+len(args.Entries))
