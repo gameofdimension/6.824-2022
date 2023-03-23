@@ -83,7 +83,7 @@ func (rf *Raft) syncLog(server int) int {
 	}
 	if !reply.Success {
 		DPrintf("sendAppendEntries process fail %t", reply.Success)
-		rf.nextIndex[server] -= 1
+		rf.nextIndex[server] = rf.computeNextIndex(reply.XTerm, reply.XIndex, reply.XLen)
 		if rf.nextIndex[server] < 1 {
 			rf.nextIndex[server] = 1
 		}
@@ -92,6 +92,30 @@ func (rf *Raft) syncLog(server int) int {
 	rf.matchIndex[server] = preLogIndex + len(entries)
 	rf.nextIndex[server] = rf.matchIndex[server] + 1
 	return 0
+}
+
+func lastIndexOfTerm(log []LogEntry, term int) int {
+	res := -1
+	for i := len(log) - 1; i >= 0; i -= 1 {
+		if log[i].Term == term {
+			return i
+		}
+		if log[i].Term < term {
+			break
+		}
+	}
+	return res
+}
+
+func (rf *Raft) computeNextIndex(xTerm int, xIndex int, Xlen int) int {
+	if xTerm <= 0 {
+		return Xlen
+	}
+	index := lastIndexOfTerm(rf.log, xTerm)
+	if index < 0 {
+		return xIndex
+	}
+	return index
 }
 
 func (rf *Raft) tryUpdateCommitIndex() int {

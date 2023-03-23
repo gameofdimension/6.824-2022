@@ -98,6 +98,9 @@ type AppendEntriesArgs struct {
 
 type AppendEntriesReply struct {
 	Term    int
+	XTerm   int
+	XIndex  int
+	XLen    int
 	Success bool
 }
 
@@ -106,6 +109,16 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.votedFor = -1
 	rf.role = RoleFollower
 	rf.persist()
+}
+
+func firstIndexOfTerm(log []LogEntry, from int) int {
+	term := log[from].Term
+	for i := from; i >= 0; i -= 1 {
+		if log[i].Term != term {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // AppendEntries RPC handler.
@@ -138,11 +151,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if leaderPrevLogIndex >= len(rf.log) {
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		reply.XLen = len(rf.log)
 		return
 	}
 	if leaderPrevLogTerm != rf.log[leaderPrevLogIndex].Term {
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		reply.XTerm = rf.log[leaderPrevLogIndex].Term
+		reply.XIndex = firstIndexOfTerm(rf.log, leaderPrevLogIndex)
+		reply.XLen = len(rf.log)
 		return
 	}
 	index := leaderPrevLogIndex + 1
