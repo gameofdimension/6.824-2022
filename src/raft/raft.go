@@ -283,6 +283,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	if len(rf.log) == 0 {
+		rf.currentTerm = 0
+		rf.votedFor = -1
 		DPrintf("log empty, append dummy record")
 		rf.log = append(rf.log, LogEntry{Term: rf.currentTerm})
 	}

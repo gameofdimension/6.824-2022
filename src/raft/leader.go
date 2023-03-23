@@ -84,8 +84,8 @@ func (rf *Raft) syncLog(server int) int {
 	if !reply.Success {
 		DPrintf("sendAppendEntries process fail %t", reply.Success)
 		rf.nextIndex[server] -= 1
-		if rf.nextIndex[server] < 0 {
-			rf.nextIndex[server] = 0
+		if rf.nextIndex[server] < 1 {
+			rf.nextIndex[server] = 1
 		}
 		return 3
 	}

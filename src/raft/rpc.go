@@ -45,6 +45,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		selfLogIndex := len(rf.log) - 1
 		selfLogTerm := rf.log[selfLogIndex].Term
 		if canVote(rf.votedFor, candidateId, candidateLogTerm, candidateLogIndex, selfLogTerm, selfLogIndex) {
+			rf.votedFor = candidateId
 			reply.VoteGranted = true
 			reply.Term = rf.currentTerm
 			return
