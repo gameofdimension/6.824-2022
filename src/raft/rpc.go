@@ -45,11 +45,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		selfLogIndex := len(rf.log) - 1
 		selfLogTerm := rf.log[selfLogIndex].Term
 		if canVote(rf.votedFor, candidateId, candidateLogTerm, candidateLogIndex, selfLogTerm, selfLogIndex) {
+			DPrintf("follower %d grant vote to %d, args: %d, %d, %d, %d, %d",
+				rf.me, candidateId, rf.votedFor, candidateLogTerm,
+				candidateLogIndex, selfLogTerm, selfLogTerm)
 			rf.votedFor = candidateId
 			reply.VoteGranted = true
 			reply.Term = rf.currentTerm
 			return
 		}
+		DPrintf("follower %d deny vote to %d, args: %d, %d, %d, %d, %d",
+			rf.me, candidateId, rf.votedFor, candidateLogTerm,
+			candidateLogIndex, selfLogTerm, selfLogTerm)
 	}
 	reply.VoteGranted = false
 	reply.Term = rf.currentTerm
@@ -129,7 +135,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
 
 	term := args.Term
-	if term >= rf.currentTerm {
+	if term > rf.currentTerm {
+		// 上面这个条件判断还是应该忠于论文用 ">"，而不是 ">="，否则会造成 bug。想象以下场景：
+		// candidate 1 和 candidate 2 都进入了同一个 term T 进行拉票，1 的动作更快一点成了 leader，
+		// 然后给发送心跳，在 ">=" 的逻辑下，其 currentTerm 不变还是 T ，但是 votedFor 会被重置。
+		// 这时 2 就又有机会成为 term T 的 leader ，而这是不允许的，相反 ">" 可以防止这样的情况
 		rf.becomeFollower(term)
 		rf.leaderId = args.LeaderId
 	}
