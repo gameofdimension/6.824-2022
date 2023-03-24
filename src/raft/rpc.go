@@ -144,13 +144,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.leaderId = args.LeaderId
 	}
 	if rf.role != RoleFollower {
+		DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d, fail not follower",
+			rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		reply.XTerm = -1
 		return
 	}
 	if term < rf.currentTerm {
+		DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d, fail for term %d vs %d",
+			rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries), term, rf.currentTerm)
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		reply.XTerm = -1
 		return
 	}
 
@@ -199,6 +205,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	reply.Success = true
 	reply.Term = rf.currentTerm
+	DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d, successful",
+		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
