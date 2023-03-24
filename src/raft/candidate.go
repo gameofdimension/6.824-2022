@@ -5,20 +5,18 @@ import (
 	"time"
 )
 
-func (rf *Raft) newSession(elected chan<- bool) {
+func (rf *Raft) newSession() bool {
 	rf.mu.Lock()
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
+	rf.persist()
 	rf.leaderId = -1
 
 	term := rf.currentTerm
 	candidateId := rf.me
 	lastLogIndex := len(rf.log) - 1
 	lastLogTerm := rf.log[lastLogIndex].Term
-	rf.persist()
 	rf.mu.Unlock()
-
-	votes := 1
 
 	result := make(chan int)
 	for ix := range rf.peers {
@@ -34,60 +32,64 @@ func (rf *Raft) newSession(elected chan<- bool) {
 			}
 			reply := RequestVoteReply{}
 			rc := rf.sendRequestVote(server, &args, &reply)
-			if rc {
-				if reply.Term > term {
-					DPrintf("sendRequestVote degraded %d->%d", rf.me, server)
-					rf.mu.Lock()
-					rf.becomeFollower(reply.Term)
-					rf.leaderId = -1
-					rf.mu.Unlock()
-
-					ch <- -1
-					return
-				}
-				if reply.VoteGranted {
-					if reply.Term > term {
-						panic("follower term is bigger than candidate, meanwhile vote granted")
-					}
-					DPrintf("sendRequestVote granted %d->%d", server, rf.me)
-					ch <- 0
-					return
-				} else {
-					DPrintf("sendRequestVote not granted %d->%d", server, rf.me)
-					ch <- 1
-					return
-				}
-			} else {
+			if !rc {
 				DPrintf("sendRequestVote fail %d->%d", server, rf.me)
 				ch <- 2
 				return
 			}
+			if reply.Term > term {
+				DPrintf("sendRequestVote degraded %d->%d, %d vs %d", server, rf.me, reply.Term, term)
+				rf.mu.Lock()
+				rf.becomeFollower(reply.Term)
+				rf.leaderId = -1
+				rf.mu.Unlock()
+				ch <- -1
+				return
+			}
+			if reply.VoteGranted {
+				if reply.Term > term {
+					panic("follower term is bigger than candidate, meanwhile vote granted")
+				}
+				DPrintf("sendRequestVote granted %d->%d", server, rf.me)
+				ch <- 0
+				return
+			}
+			DPrintf("sendRequestVote not granted %d->%d", server, rf.me)
+			ch <- 1
 		}(ix, result)
 	}
 
-	count := 0
+	votes := 1
+	count := 1
 	for rf.killed() == false {
-		if count >= len(rf.peers)-1 {
-			elected <- false
-			return
+		rf.mu.Lock()
+		if rf.role != RoleCandidate {
+			rf.mu.Unlock()
+			break
 		}
+		pn := len(rf.peers)
+		if count >= pn {
+			rf.mu.Unlock()
+			break
+		}
+		rf.mu.Unlock()
+
 		select {
 		case ret := <-result:
 			count += 1
-			DPrintf("collect %d, %d vote result", count, ret)
+			DPrintf("collect %d, %d/%d vote result", ret, votes, count)
 			if ret < 0 {
-				elected <- false
-				return
+				return false
 			}
 			if ret == 0 {
 				votes += 1
-				if votes*2 > len(rf.peers) {
-					elected <- true
-					return
+				if votes*2 > pn {
+					return true
 				}
 			}
 		}
 	}
+	return false
 }
 
 func (rf *Raft) becomeCandidate() {
@@ -106,21 +108,17 @@ func (rf *Raft) startElection() {
 		if role != RoleCandidate {
 			break
 		}
-		elected := make(chan bool)
-		rf.electionStartAt = time.Now().UnixMilli()
-		go rf.newSession(elected)
 
+		rf.electionStartAt = time.Now().UnixMilli()
 		span := rand.Intn(Delta) + ElectionTimeout
-		select {
-		case ret := <-elected:
-			DPrintf("election start at: %d, end at: %d, ret: %t", rf.electionStartAt, time.Now().UnixMilli(), ret)
-			if ret {
-				rf.becomeLeader()
-			} else {
-				time.Sleep(time.Duration(span) * time.Millisecond)
-			}
-		case <-time.After(time.Duration(span) * time.Millisecond):
+		ret := rf.newSession()
+		DPrintf("election start at: %d, end at: %d, candidate: %d, ret: %t",
+			rf.electionStartAt, time.Now().UnixMilli(), rf.me, ret)
+		if ret {
+			rf.becomeLeader()
+			break
 		}
+		time.Sleep(time.Duration(span) * time.Millisecond)
 	}
 }
 
