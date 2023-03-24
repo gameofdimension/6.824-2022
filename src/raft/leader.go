@@ -56,7 +56,7 @@ func (rf *Raft) syncLog(server int) int {
 			len(rf.log), rf.me, server, role == RoleLeader, rf.nextIndex[server]))
 	}
 	preLogTerm := rf.log[preLogIndex].Term
-	DPrintf("sync worker %d of leader %d, term %d, nextIndex: %d, log: %v",
+	DPrintf("sync worker %d of leader %d, term:%d, nextIndex: %d, log: %v",
 		server, self, currentTerm, rf.nextIndex[server], rf.log)
 	entries := rf.log[rf.nextIndex[server]:]
 	rf.mu.Unlock()
@@ -114,7 +114,6 @@ func (rf *Raft) syncLog(server int) int {
 		}
 		return 3
 	}
-	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries success", server, self, rf.currentTerm)
 	rf.matchIndex[server] = preLogIndex + len(entries)
 	rf.nextIndex[server] = rf.matchIndex[server] + 1
 	if rf.nextIndex[server] > len(rf.log) {
@@ -124,6 +123,7 @@ func (rf *Raft) syncLog(server int) int {
 		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries empty entry", server, self, rf.currentTerm)
 		return -2
 	}
+	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries success", server, self, rf.currentTerm)
 	return 0
 }
 
