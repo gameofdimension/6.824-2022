@@ -217,6 +217,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.mu.Lock()
+	DPrintf("%d was killed at term %d", rf.me, rf.currentTerm)
+	defer rf.mu.Unlock()
 }
 
 func (rf *Raft) killed() bool {

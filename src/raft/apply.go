@@ -7,6 +7,7 @@ func (rf *Raft) applyLog() {
 		rf.mu.Lock()
 		idle := true
 		if rf.commitIndex > rf.lastApplied {
+			DPrintf("%d apply %d vs %d, %v", rf.me, rf.lastApplied, rf.commitIndex, rf.log[rf.lastApplied+1])
 			rf.lastApplied += 1
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,

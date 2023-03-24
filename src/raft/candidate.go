@@ -134,5 +134,5 @@ func (rf *Raft) becomeLeader() {
 		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
-	DPrintf("%d become leader of term %d", rf.me, rf.currentTerm)
+	DPrintf("%d become leader of term %d, %v", rf.me, rf.currentTerm, rf.log)
 }
