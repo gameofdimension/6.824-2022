@@ -12,7 +12,7 @@ func (rf *Raft) newSession() bool {
 	rf.persist()
 	rf.leaderId = -1
 
-	term := rf.currentTerm
+	currentTerm := rf.currentTerm
 	candidateId := rf.me
 	lastLogIndex := len(rf.log) - 1
 	lastLogTerm := rf.log[lastLogIndex].Term
@@ -25,7 +25,7 @@ func (rf *Raft) newSession() bool {
 		}
 		go func(server int, ch chan<- int) {
 			args := RequestVoteArgs{
-				Term:         term,
+				Term:         currentTerm,
 				CandidateId:  candidateId,
 				LastLogIndex: lastLogIndex,
 				LastLogTerm:  lastLogTerm,
@@ -33,12 +33,12 @@ func (rf *Raft) newSession() bool {
 			reply := RequestVoteReply{}
 			rc := rf.sendRequestVote(server, &args, &reply)
 			if !rc {
-				DPrintf("sendRequestVote fail %d->%d", server, rf.me)
+				DPrintf("call sendRequestVote fail %d->%d", server, rf.me)
 				ch <- 2
 				return
 			}
-			if reply.Term > term {
-				DPrintf("sendRequestVote degraded %d->%d, %d vs %d", server, rf.me, reply.Term, term)
+			if reply.Term > currentTerm {
+				DPrintf("call sendRequestVote degraded %d->%d, %d vs %d", server, rf.me, reply.Term, currentTerm)
 				rf.mu.Lock()
 				rf.becomeFollower(reply.Term)
 				rf.leaderId = -1
@@ -47,14 +47,14 @@ func (rf *Raft) newSession() bool {
 				return
 			}
 			if reply.VoteGranted {
-				if reply.Term > term {
+				if reply.Term > currentTerm {
 					panic("follower term is bigger than candidate, meanwhile vote granted")
 				}
-				DPrintf("sendRequestVote granted %d->%d", server, rf.me)
+				DPrintf("call sendRequestVote granted %d->%d", server, rf.me)
 				ch <- 0
 				return
 			}
-			DPrintf("sendRequestVote not granted %d->%d", server, rf.me)
+			DPrintf("call sendRequestVote denied %d->%d", server, rf.me)
 			ch <- 1
 		}(ix, result)
 	}
@@ -77,7 +77,7 @@ func (rf *Raft) newSession() bool {
 		select {
 		case ret := <-result:
 			count += 1
-			DPrintf("collect %d, %d/%d vote result", ret, votes, count)
+			DPrintf("candidate %d get vote %d, %d/%d/%d vote result", rf.me, ret, votes, count, pn)
 			if ret < 0 {
 				return false
 			}
@@ -125,6 +125,10 @@ func (rf *Raft) startElection() {
 func (rf *Raft) becomeLeader() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if rf.role != RoleCandidate {
+		DPrintf("%d fail become leader of term %d", rf.me, rf.currentTerm)
+		return
+	}
 	rf.role = RoleLeader
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = len(rf.log)
