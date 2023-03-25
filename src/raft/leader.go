@@ -20,8 +20,7 @@ func (rf *Raft) sendHeartBeat() bool {
 		go func(server int) {
 			rf.mu.Lock()
 			entries := make([]LogEntry, 0)
-			logIdx := len(rf.log) - 1
-			logTerm := rf.log[logIdx].Term
+			logIdx, logTerm := rf.vlog.GetLastIndexTerm()
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
@@ -51,14 +50,15 @@ func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
 	leaderCommit := rf.commitIndex
 
 	preLogIndex := rf.nextIndex[server] - 1
-	if rf.nextIndex[server] > len(rf.log) {
+	leaderNext := rf.vlog.NextIndex()
+	if rf.nextIndex[server] > leaderNext {
 		panic(fmt.Sprintf("inspect next index %d ,%d vs %d, %t, %d\n",
-			len(rf.log), rf.me, server, role == RoleLeader, rf.nextIndex[server]))
+			leaderNext, rf.me, server, role == RoleLeader, rf.nextIndex[server]))
 	}
-	preLogTerm := rf.log[preLogIndex].Term
-	DPrintf("sync worker %d of leader %d, term:%d, nextIndex: %d, log: %v",
-		server, self, currentTerm, rf.nextIndex[server], rf.log)
-	entries := rf.log[rf.nextIndex[server]:]
+	preLogTerm := rf.vlog.GetTermAtIndex(preLogIndex)
+	DPrintf("sync worker %d of leader %d, term:%d, nextIndex: %d",
+		server, self, currentTerm, rf.nextIndex[server])
+	entries := rf.vlog.Slice(rf.nextIndex[server])
 
 	// 下面这个优化看起来可以节省不必要的 rpc 通信，事实上是有害的
 	// 因为新 leader 上任之后，会将其的 nextIndex 初始化为 log
@@ -116,8 +116,8 @@ func (rf *Raft) syncLog(server int) int {
 		}
 		next := rf.computeNextIndex(reply.XTerm, reply.XIndex, reply.XLen, args.PrevLogIndex)
 		rf.nextIndex[server] = next
-		if rf.nextIndex[server] > len(rf.log) {
-			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], len(rf.log)))
+		if rf.nextIndex[server] > rf.vlog.NextIndex() {
+			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], rf.vlog.NextIndex()))
 		}
 		if rf.nextIndex[server] < 1 {
 			rf.nextIndex[server] = 1
@@ -126,8 +126,8 @@ func (rf *Raft) syncLog(server int) int {
 	}
 	rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 	rf.nextIndex[server] = rf.matchIndex[server] + 1
-	if rf.nextIndex[server] > len(rf.log) {
-		panic(fmt.Sprintf("nextIndex fail %d, %d, %d\n", server, rf.nextIndex[server], len(rf.log)))
+	if rf.nextIndex[server] > rf.vlog.NextIndex() {
+		panic(fmt.Sprintf("nextIndex fail %d, %d, %d\n", server, rf.nextIndex[server], rf.vlog.NextIndex()))
 	}
 	if len(args.Entries) <= 0 {
 		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries empty entry", server, args.LeaderId, rf.currentTerm)
@@ -137,13 +137,14 @@ func (rf *Raft) syncLog(server int) int {
 	return 0
 }
 
-func lastIndexOfTerm(log []LogEntry, term int, preLogIndex int) int {
+func (rf *Raft) lastIndexOfTerm(term int, preLogIndex int) int {
 	res := -1
-	for i := preLogIndex; i >= 0; i -= 1 {
-		if log[i].Term == term {
+	bottom := rf.vlog.GetLastIncludedIndex() + 1
+	for i := preLogIndex; i >= bottom; i -= 1 {
+		if rf.vlog.GetItem(i).Term == term {
 			return i
 		}
-		if log[i].Term < term {
+		if rf.vlog.GetItem(i).Term < term {
 			break
 		}
 	}
@@ -154,11 +155,11 @@ func (rf *Raft) computeNextIndex(xTerm int, xIndex int, Xlen int, preLogIndex in
 	if xTerm <= 0 {
 		return Xlen
 	}
-	index := lastIndexOfTerm(rf.log, xTerm, preLogIndex)
+	index := rf.lastIndexOfTerm(xTerm, preLogIndex)
 	if index < 0 {
 		return xIndex
 	}
-	return index
+	return index + 1
 }
 
 func (rf *Raft) tryUpdateCommitIndex() int {
@@ -167,11 +168,13 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 	if rf.role != RoleLeader {
 		return -1
 	}
-	for idx := len(rf.log) - 1; idx > rf.commitIndex; idx -= 1 {
-		if rf.log[idx].Term < rf.currentTerm {
+
+	for idx := rf.vlog.NextIndex() - 1; idx > rf.commitIndex; idx -= 1 {
+		term := rf.vlog.GetItem(idx).Term
+		if term < rf.currentTerm {
 			break
 		}
-		if rf.log[idx].Term > rf.currentTerm {
+		if term > rf.currentTerm {
 			continue
 		}
 		matchCount := 1
@@ -184,7 +187,7 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 			}
 		}
 		if 2*matchCount > len(rf.peers) {
-			DPrintf("leader %d update commit index %d->%d, %v", rf.me, rf.commitIndex, idx, rf.log)
+			DPrintf("leader %d update commit index %d->%d", rf.me, rf.commitIndex, idx)
 			rf.commitIndex = idx
 			return 0
 		}

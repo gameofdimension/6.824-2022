@@ -88,7 +88,7 @@ type Raft struct {
 	// persistent state
 	currentTerm int
 	votedFor    int
-	log         []LogEntry
+	vlog VirtualLog
 
 	leaderId    int
 	commitIndex int
@@ -126,7 +126,7 @@ func (rf *Raft) persist() {
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
-	e.Encode(rf.log)
+	e.Encode(rf.vlog)
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
 }
@@ -142,15 +142,15 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var currentTerm int
 	var votedFor int
-	var log []LogEntry
+	var vlog VirtualLog
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
-		d.Decode(&log) != nil {
+		d.Decode(&vlog) != nil {
 		panic("readPersist fail, Decode")
 	} else {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
-		rf.log = log
+		rf.vlog = vlog
 	}
 }
 
@@ -187,7 +187,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	index := len(rf.log)
+	index := rf.vlog.NextIndex()
 	term := rf.currentTerm
 	if rf.killed() {
 		return index, term, false
@@ -198,7 +198,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	DPrintf("%d add command %v at term %d", rf.me, command, term)
-	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+	rf.vlog.AddItem(LogEntry{Term: term, Command: command})
 	rf.persist()
 
 	// Your code here (2B).
@@ -282,16 +282,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	if len(rf.log) == 0 {
+	if rf.vlog.isEmpty() {
 		rf.currentTerm = 0
 		rf.votedFor = -1
-		DPrintf("log empty, append dummy record")
-		rf.log = append(rf.log, LogEntry{Term: rf.currentTerm})
+		DPrintf("log empty after readPersist")
+		rf.vlog = VirtualLog{
+			LastIncludedIndex: 0,
+			LastIncludedTerm:  0,
+			Data:              make([]LogEntry, 0),
+		}
 	}
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	for idx := range rf.nextIndex {
-		rf.nextIndex[idx] = len(rf.log)
+		rf.nextIndex[idx] = rf.vlog.NextIndex()
 		rf.matchIndex[idx] = 0
 	}
 

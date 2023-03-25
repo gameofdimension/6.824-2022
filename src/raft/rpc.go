@@ -42,8 +42,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		candidateId := args.CandidateId
 		candidateLogTerm := args.LastLogTerm
 		candidateLogIndex := args.LastLogIndex
-		selfLogIndex := len(rf.log) - 1
-		selfLogTerm := rf.log[selfLogIndex].Term
+		selfLogIndex, selfLogTerm := rf.vlog.GetLastIndexTerm()
 		if canVote(rf.votedFor, candidateId, candidateLogTerm, candidateLogIndex, selfLogTerm, selfLogIndex) {
 			DPrintf("follower %d grant vote to %d, args: %d, %d, %d, %d, %d",
 				rf.me, candidateId, rf.votedFor, candidateLogTerm,
@@ -114,17 +113,28 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.role = RoleFollower
+	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.persist()
 }
 
-func firstIndexOfTerm(log []LogEntry, from int) int {
-	term := log[from].Term
-	for i := from; i >= 0; i -= 1 {
-		if log[i].Term != term {
+func (rf *Raft) firstIndexOfTerm(from int) int {
+	term := rf.vlog.GetItem(from).Term
+	bottom := rf.vlog.GetLastIncludedIndex() + 1
+	for i := from; i >= bottom; i -= 1 {
+		if rf.vlog.GetItem(i).Term != term {
 			return i + 1
 		}
 	}
-	return 0
+	return bottom
+}
+
+func (rf *Raft) firstTangibleIndex() (int, int) {
+	lastIncludedIndex := rf.vlog.GetLastIncludedIndex()
+	nextIndex := rf.vlog.NextIndex()
+	if lastIncludedIndex+1 != nextIndex {
+		return lastIncludedIndex + 1, rf.vlog.GetItem(lastIncludedIndex + 1).Term
+	}
+	return 0, 0
 }
 
 // AppendEntries RPC handler.
@@ -164,43 +174,43 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	leaderPrevLogIndex := args.PrevLogIndex
 	leaderPrevLogTerm := args.PrevLogTerm
-	if leaderPrevLogIndex >= len(rf.log) {
+
+	lastIncludedIndex := rf.vlog.GetLastIncludedIndex()
+	nextIndex := rf.vlog.NextIndex()
+	if leaderPrevLogIndex >= nextIndex {
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		reply.XTerm = 0
 		reply.XIndex = 0
-		reply.XLen = len(rf.log)
+		reply.XLen = nextIndex
 		return
 	}
-	if leaderPrevLogTerm != rf.log[leaderPrevLogIndex].Term {
+	if leaderPrevLogIndex < lastIncludedIndex {
 		reply.Success = false
 		reply.Term = rf.currentTerm
-		reply.XTerm = rf.log[leaderPrevLogIndex].Term
-		reply.XIndex = firstIndexOfTerm(rf.log, leaderPrevLogIndex)
-		reply.XLen = len(rf.log)
+		reply.XIndex, reply.XTerm = rf.firstTangibleIndex()
+		reply.XLen = nextIndex
 		return
 	}
-	index := leaderPrevLogIndex + 1
-	for i := 0; i < len(args.Entries); i += 1 {
-		if index >= len(rf.log) {
-			left := args.Entries[i:]
-			rf.log = append(rf.log, left...)
-			break
+	myTerm := rf.vlog.GetTermAtIndex(leaderPrevLogIndex)
+	if leaderPrevLogTerm != myTerm {
+		reply.Success = false
+		reply.Term = rf.currentTerm
+		if leaderPrevLogIndex > lastIncludedIndex {
+			reply.XTerm = myTerm
+			reply.XIndex = rf.firstIndexOfTerm(leaderPrevLogIndex)
+		} else {
+			reply.XIndex, reply.XTerm = rf.firstTangibleIndex()
 		}
-		entryTerm := rf.log[index].Term
-		if entryTerm != args.Entries[i].Term {
-			rf.log = rf.log[:index]
-			left := args.Entries[i:]
-			rf.log = append(rf.log, left...)
-			break
-		}
-		index += 1
+		reply.XLen = nextIndex
+		return
 	}
+	rf.vlog.CopyEntries(leaderPrevLogIndex+1, args.Entries)
 	rf.persist()
 	leaderCommit := args.LeaderCommit
 	if leaderCommit > rf.commitIndex {
 		newVal := min(leaderCommit, args.PrevLogIndex+len(args.Entries))
-		DPrintf("follower %d update commit index %d->%d, %v", rf.me, rf.commitIndex, newVal, rf.log)
+		DPrintf("follower %d update commit index %d->%d", rf.me, rf.commitIndex, newVal)
 		rf.commitIndex = newVal
 	}
 	reply.Success = true
@@ -211,5 +221,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
+type InstallSnapshotArgs struct {
+	Term              int
+	LeaderId          int
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Data              []byte
+}
+
+type InstallSnapshotReply struct {
+	Term int
+}
+
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+}
+
+func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
+	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	return ok
 }

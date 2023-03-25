@@ -27,8 +27,7 @@ func (rf *Raft) newSession() bool {
 
 	currentTerm := rf.currentTerm
 	candidateId := rf.me
-	lastLogIndex := len(rf.log) - 1
-	lastLogTerm := rf.log[lastLogIndex].Term
+	lastLogIndex, lastLogTerm := rf.vlog.GetLastIndexTerm()
 	rf.mu.Unlock()
 
 	result := make(chan int)
@@ -99,6 +98,7 @@ func (rf *Raft) newSession() bool {
 }
 
 func (rf *Raft) becomeCandidate() {
+	DPrintf("%d becomeCandidate at term %d", rf.me, rf.currentTerm)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.role = RoleCandidate
@@ -137,8 +137,8 @@ func (rf *Raft) becomeLeader() {
 	}
 	rf.role = RoleLeader
 	for i := range rf.nextIndex {
-		rf.nextIndex[i] = len(rf.log)
+		rf.nextIndex[i] = rf.vlog.NextIndex()
 		rf.matchIndex[i] = 0
 	}
-	DPrintf("%d become leader of term %d, %v", rf.me, rf.currentTerm, rf.log)
+	DPrintf("%d become leader of term %d", rf.me, rf.currentTerm)
 }
