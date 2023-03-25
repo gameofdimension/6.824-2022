@@ -5,6 +5,19 @@ import (
 	"time"
 )
 
+func (rf *Raft) checkProgress(count int) (bool, int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.role != RoleCandidate {
+		return false, -1
+	}
+	pn := len(rf.peers)
+	if count >= pn {
+		return false, -2
+	}
+	return true, pn
+}
+
 func (rf *Raft) newSession() bool {
 	rf.mu.Lock()
 	rf.currentTerm += 1
@@ -62,17 +75,10 @@ func (rf *Raft) newSession() bool {
 	votes := 1
 	count := 1
 	for rf.killed() == false {
-		rf.mu.Lock()
-		if rf.role != RoleCandidate {
-			rf.mu.Unlock()
+		ret, pn := rf.checkProgress(count)
+		if !ret {
 			break
 		}
-		pn := len(rf.peers)
-		if count >= pn {
-			rf.mu.Unlock()
-			break
-		}
-		rf.mu.Unlock()
 
 		select {
 		case ret := <-result:

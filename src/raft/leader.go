@@ -39,12 +39,12 @@ func (rf *Raft) sendHeartBeat() bool {
 	return true
 }
 
-func (rf *Raft) syncLog(server int) int {
+func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	role := rf.role
 	if role != RoleLeader {
-		rf.mu.Unlock()
-		return -1
+		return false, nil
 	}
 	self := rf.me
 	currentTerm := rf.currentTerm
@@ -59,7 +59,6 @@ func (rf *Raft) syncLog(server int) int {
 	DPrintf("sync worker %d of leader %d, term:%d, nextIndex: %d, log: %v",
 		server, self, currentTerm, rf.nextIndex[server], rf.log)
 	entries := rf.log[rf.nextIndex[server]:]
-	rf.mu.Unlock()
 
 	// 下面这个优化看起来可以节省不必要的 rpc 通信，事实上是有害的
 	// 因为新 leader 上任之后，会将其的 nextIndex 初始化为 log
@@ -84,10 +83,20 @@ func (rf *Raft) syncLog(server int) int {
 		Entries:      entries,
 		LeaderCommit: leaderCommit,
 	}
+	return true, &args
+}
+
+func (rf *Raft) syncLog(server int) int {
+	ret, args := rf.prepareArgs(server)
+	if !ret {
+		return -1
+	}
+
 	reply := AppendEntriesReply{}
-	rc := rf.sendAppendEntries(server, &args, &reply)
+	rc := rf.sendAppendEntries(server, args, &reply)
 	if !rc {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries rpc fail %t", server, self, currentTerm, rc)
+		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries rpc fail %t",
+			server, args.LeaderId, args.Term, rc)
 		return 1
 	}
 
@@ -95,16 +104,17 @@ func (rf *Raft) syncLog(server int) int {
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
 		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries becomeFollower, reply term:%d",
-			server, self, rf.currentTerm, reply.Term)
+			server, args.LeaderId, rf.currentTerm, reply.Term)
 		rf.becomeFollower(reply.Term)
 		return 2
 	}
 	if !reply.Success {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries not success %v", server, self, rf.currentTerm, reply)
+		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries not success %v",
+			server, args.LeaderId, rf.currentTerm, reply)
 		if reply.XTerm < 0 {
 			return -3
 		}
-		next := rf.computeNextIndex(reply.XTerm, reply.XIndex, reply.XLen, preLogIndex)
+		next := rf.computeNextIndex(reply.XTerm, reply.XIndex, reply.XLen, args.PrevLogIndex)
 		rf.nextIndex[server] = next
 		if rf.nextIndex[server] > len(rf.log) {
 			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], len(rf.log)))
@@ -114,16 +124,16 @@ func (rf *Raft) syncLog(server int) int {
 		}
 		return 3
 	}
-	rf.matchIndex[server] = preLogIndex + len(entries)
+	rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 	rf.nextIndex[server] = rf.matchIndex[server] + 1
 	if rf.nextIndex[server] > len(rf.log) {
 		panic(fmt.Sprintf("nextIndex fail %d, %d, %d\n", server, rf.nextIndex[server], len(rf.log)))
 	}
-	if len(entries) <= 0 {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries empty entry", server, self, rf.currentTerm)
+	if len(args.Entries) <= 0 {
+		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries empty entry", server, args.LeaderId, rf.currentTerm)
 		return -2
 	}
-	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries success", server, self, rf.currentTerm)
+	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries success", server, args.LeaderId, rf.currentTerm)
 	return 0
 }
 
