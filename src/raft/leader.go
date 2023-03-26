@@ -5,11 +5,25 @@ import (
 	"time"
 )
 
-func (rf *Raft) sendHeartBeat() bool {
+func (rf *Raft) makeHeartBeatArgs() (RoleType, AppendEntriesArgs) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	entries := make([]LogEntry, 0)
+	logIdx, logTerm := rf.vlog.GetLastIndexTerm()
+	args := AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
+		PrevLogIndex: logIdx,
+		PrevLogTerm:  logTerm,
+		Entries:      entries,
+		LeaderCommit: rf.commitIndex,
+	}
+	return rf.role, args
+}
 
-	if rf.role != RoleLeader {
+func (rf *Raft) sendHeartBeat() bool {
+	role, req := rf.makeHeartBeatArgs()
+	if role != RoleLeader {
 		return false
 	}
 
@@ -17,33 +31,23 @@ func (rf *Raft) sendHeartBeat() bool {
 		if idx == rf.me {
 			continue
 		}
-		go func(server int) {
+		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return
 			}
-			entries := make([]LogEntry, 0)
-			logIdx, logTerm := rf.vlog.GetLastIndexTerm()
-			args := AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				PrevLogIndex: logIdx,
-				PrevLogTerm:  logTerm,
-				Entries:      entries,
-				LeaderCommit: rf.commitIndex,
-			}
 			rf.mu.Unlock()
 
 			reply := AppendEntriesReply{}
-			rc := rf.sendAppendEntries(server, &args, &reply)
+			rc := rf.sendAppendEntries(server, args, &reply)
 			rf.mu.Lock()
-			DPrintf("%d send heartbeat to %d at term %d, %t, %v", rf.me, server, rf.currentTerm, rc, reply)
+			DPrintf("%d send heartbeat to %d, ret: [rpc:%t,success:%t], %v, %v", rf.me, server, rc, reply.Success, args, reply)
 			if rc && reply.Term > rf.currentTerm {
 				rf.becomeFollower(reply.Term)
 			}
 			rf.mu.Unlock()
-		}(idx)
+		}(idx, &req)
 	}
 	return true
 }

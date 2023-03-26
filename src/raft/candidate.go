@@ -18,7 +18,7 @@ func (rf *Raft) checkProgress(count int) (bool, int) {
 	return true, pn
 }
 
-func (rf *Raft) newSession() bool {
+func (rf *Raft) newSession() int {
 	rf.mu.Lock()
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
@@ -37,8 +37,9 @@ func (rf *Raft) newSession() bool {
 		}
 		go func(server int, ch chan<- int) {
 			rf.mu.Lock()
+			DPrintf("%d call sendRequestVote %d start", rf.me, server)
 			if rf.role != RoleCandidate {
-				DPrintf("call sendRequestVote not candidate %d->%d", server, rf.me)
+				DPrintf("%d call sendRequestVote %d not candidate", candidateId, server)
 				ch <- -1
 				rf.mu.Unlock()
 				return
@@ -53,12 +54,12 @@ func (rf *Raft) newSession() bool {
 			reply := RequestVoteReply{}
 			rc := rf.sendRequestVote(server, &args, &reply)
 			if !rc {
-				DPrintf("call sendRequestVote fail %d->%d", server, rf.me)
+				DPrintf("%d call sendRequestVote %d rpc fail", rf.me, server)
 				ch <- 2
 				return
 			}
 			if reply.Term > currentTerm {
-				DPrintf("call sendRequestVote degraded %d->%d, %d vs %d", server, rf.me, reply.Term, currentTerm)
+				DPrintf("%d call sendRequestVote %d degraded, %d vs %d", candidateId, server, reply.Term, currentTerm)
 				rf.mu.Lock()
 				rf.becomeFollower(reply.Term)
 				rf.leaderId = -1
@@ -70,11 +71,11 @@ func (rf *Raft) newSession() bool {
 				if reply.Term > currentTerm {
 					panic("follower term is bigger than candidate, meanwhile vote granted")
 				}
-				DPrintf("call sendRequestVote granted %d->%d", server, rf.me)
+				DPrintf("%d call sendRequestVote %d granted", candidateId, server)
 				ch <- 0
 				return
 			}
-			DPrintf("call sendRequestVote denied %d->%d", server, rf.me)
+			DPrintf("%d call sendRequestVote %d denied", candidateId, server)
 			ch <- 1
 		}(ix, result)
 	}
@@ -90,19 +91,22 @@ func (rf *Raft) newSession() bool {
 		select {
 		case ret := <-result:
 			count += 1
-			DPrintf("candidate %d get vote %d, %d/%d/%d vote result", rf.me, ret, votes, count, pn)
+			DPrintf("candidate %d election ret [%t,%d], %d/%d/%d vote result", candidateId, ret == 0, ret, votes, count, pn)
 			if ret < 0 {
-				return false
+				return -1
 			}
 			if ret == 0 {
 				votes += 1
 				if votes*2 > pn {
-					return true
+					return 0
 				}
 			}
+		case <-time.After(ElectionTimeout * time.Millisecond):
+			DPrintf("candidate %d election timeout", candidateId)
+			return 1
 		}
 	}
-	return false
+	return 2
 }
 
 func (rf *Raft) becomeCandidate() {
@@ -126,11 +130,14 @@ func (rf *Raft) startElection() {
 		rf.electionStartAt = time.Now().UnixMilli()
 		span := rand.Intn(Delta) + ElectionTimeout
 		ret := rf.newSession()
-		DPrintf("election start at: %d, end at: %d, candidate: %d, ret: %t",
-			rf.electionStartAt, time.Now().UnixMilli(), rf.me, ret)
-		if ret {
+		DPrintf("candidate %d election cost time: %d, ret: %d",
+			rf.me, time.Now().UnixMilli()-rf.electionStartAt, ret)
+		if ret == 0 {
 			rf.becomeLeader()
 			break
+		}
+		if ret == 1 {
+			continue
 		}
 		time.Sleep(time.Duration(span) * time.Millisecond)
 	}
