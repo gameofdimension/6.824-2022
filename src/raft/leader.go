@@ -32,7 +32,13 @@ func (rf *Raft) sendHeartBeat() bool {
 			rf.mu.Unlock()
 
 			reply := AppendEntriesReply{}
-			rf.sendAppendEntries(server, &args, &reply)
+			rc := rf.sendAppendEntries(server, &args, &reply)
+			rf.mu.Lock()
+			DPrintf("%d send heartbeat to %d at term %d, %t, %v", rf.me, server, rf.currentTerm, rc, reply)
+			if rc && reply.Term > rf.currentTerm {
+				rf.becomeFollower(reply.Term)
+			}
+			rf.mu.Unlock()
 		}(idx)
 	}
 	return true

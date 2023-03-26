@@ -113,7 +113,6 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.role = RoleFollower
-	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.persist()
 }
 
