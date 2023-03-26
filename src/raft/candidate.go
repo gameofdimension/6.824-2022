@@ -36,6 +36,14 @@ func (rf *Raft) newSession() bool {
 			continue
 		}
 		go func(server int, ch chan<- int) {
+			rf.mu.Lock()
+			if rf.role != RoleCandidate {
+				DPrintf("call sendRequestVote not candidate %d->%d", server, rf.me)
+				ch <- -1
+				rf.mu.Unlock()
+				return
+			}
+			rf.mu.Unlock()
 			args := RequestVoteArgs{
 				Term:         currentTerm,
 				CandidateId:  candidateId,

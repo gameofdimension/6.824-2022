@@ -19,6 +19,10 @@ func (rf *Raft) sendHeartBeat() bool {
 		}
 		go func(server int) {
 			rf.mu.Lock()
+			if rf.role != RoleLeader {
+				rf.mu.Unlock()
+				return
+			}
 			entries := make([]LogEntry, 0)
 			logIdx, logTerm := rf.vlog.GetLastIndexTerm()
 			args := AppendEntriesArgs{
