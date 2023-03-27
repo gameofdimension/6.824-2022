@@ -40,8 +40,8 @@ func (rf *Raft) newSession() int {
 			DPrintf("%d call sendRequestVote %d start", rf.me, server)
 			if rf.role != RoleCandidate {
 				DPrintf("%d call sendRequestVote %d not candidate", candidateId, server)
-				ch <- -1
 				rf.mu.Unlock()
+				ch <- -1
 				return
 			}
 			rf.mu.Unlock()
