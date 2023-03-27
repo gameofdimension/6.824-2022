@@ -22,15 +22,16 @@ func (vl *VirtualLog) GetLastIncludedIndex() int {
 	return vl.LastIncludedIndex
 }
 
-func (vl *VirtualLog) isEmpty() bool {
+func (vl *VirtualLog) isPrime() bool {
 	return vl.LastIncludedIndex == 0 && len(vl.Data) == 0
 }
 
-func (vl *VirtualLog) SnapshotAt(index int) {
+func (vl *VirtualLog) ApplySnapshot(index int) int {
 	paddr := vl.v2p(index)
 	vl.LastIncludedIndex = index
 	vl.LastIncludedTerm = vl.Data[paddr].Term
-	vl.Data = vl.Data[:paddr+1]
+	vl.Data = vl.Data[paddr+1:]
+	return vl.LastIncludedTerm
 }
 
 func (vl *VirtualLog) GetItem(index int) *LogEntry {
@@ -46,13 +47,13 @@ func (vl *VirtualLog) GetTermAtIndex(index int) int {
 		return vl.GetItem(index).Term
 	}
 	if vl.LastIncludedIndex != index {
-		panic(fmt.Sprintf("index %d vs %din snapshot", index, vl.LastIncludedIndex))
+		panic(fmt.Sprintf("index %d vs %d in snapshot", index, vl.LastIncludedIndex))
 	}
 	return vl.LastIncludedTerm
 }
 
-func (vl *VirtualLog) AddItem(entry LogEntry) {
-	vl.Data = append(vl.Data, entry)
+func (vl *VirtualLog) AddItem(entry *LogEntry) {
+	vl.Data = append(vl.Data, *entry)
 }
 
 func (vl *VirtualLog) NextIndex() int {
