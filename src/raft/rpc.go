@@ -104,7 +104,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	select {
 	case ret := <-done:
 		return ret
-	case <-time.After(time.Second):
+	case <-time.After(500 * time.Millisecond):
 		DPrintf("Raft.RequestVote %d->%d, timeout", self, server)
 		return false
 	}
@@ -225,7 +225,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.XLen = nextIndex
 		return
 	}
-	rf.vlog.CopyEntries(leaderPrevLogIndex+1, args.Entries)
+	tmp := make([]LogEntry, len(args.Entries))
+	copy(tmp, args.Entries)
+	rf.vlog.CopyEntries(leaderPrevLogIndex+1, tmp)
 	rf.persist()
 	leaderCommit := args.LeaderCommit
 	if leaderCommit > rf.commitIndex {
@@ -252,7 +254,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	select {
 	case ret := <-done:
 		return ret
-	case <-time.After(time.Second):
+	case <-time.After(500 * time.Millisecond):
 		DPrintf("Raft.AppendEntries %d->%d, timeout", self, server)
 		return false
 	}
