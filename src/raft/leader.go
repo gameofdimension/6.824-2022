@@ -267,9 +267,12 @@ func (rf *Raft) replicateWorker(server int) {
 	for rf.killed() == false {
 		rf.mu.Lock()
 		sendSnapshot := false
-		DPrintf("%d InstallSnapshot %d, %d vs %d", rf.me, server, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
 		if rf.nextIndex[server] <= rf.vlog.GetLastIncludedIndex() {
 			sendSnapshot = true
+		}
+		if rf.role == RoleLeader {
+			DPrintf("%d InstallSnapshot %d, %d vs %d, sendSnapshot:%t",
+				rf.me, server, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}
 		rf.mu.Unlock()
 
