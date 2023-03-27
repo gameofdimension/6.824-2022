@@ -97,10 +97,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	rf.mu.Unlock()
 	go func() {
 		start := time.Now().UnixMilli()
-		resp := RequestVoteReply{}
-		ok := rf.peers[server].Call("Raft.RequestVote", args, &resp)
+		ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 		DPrintf("Raft.RequestVote %d->%d, time: %d", self, server, time.Now().UnixMilli()-start)
-		*reply = resp
 		done <- ok
 	}()
 	select {
@@ -247,10 +245,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	rf.mu.Unlock()
 	go func() {
 		start := time.Now().UnixMilli()
-		resp := AppendEntriesReply{}
-		ok := rf.peers[server].Call("Raft.AppendEntries", args, &resp)
+		ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 		DPrintf("Raft.AppendEntries %d->%d, time: %d", self, server, time.Now().UnixMilli()-start)
-		*reply = resp
 		done <- ok
 	}()
 	select {

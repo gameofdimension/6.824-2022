@@ -43,7 +43,11 @@ func (rf *Raft) sendHeartBeat() bool {
 			reply := AppendEntriesReply{}
 			DPrintf("%d send heartbeat to %d begin", self, server)
 			rc := rf.sendAppendEntries(server, args, &reply)
-			DPrintf("%d send heartbeat to %d return: [rpc:%t,success:%t], %v, %v", self, server, rc, reply.Success, args, reply)
+			if rc {
+				DPrintf("%d send heartbeat to %d success:%t, %v, %v", self, server, reply.Success, args, reply)
+			} else {
+				DPrintf("%d send heartbeat to %d rpc fail", self, server)
+			}
 			rf.mu.Lock()
 			if rc && reply.Term > rf.currentTerm {
 				rf.becomeFollower(reply.Term)
