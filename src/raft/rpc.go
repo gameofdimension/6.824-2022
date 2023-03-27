@@ -242,6 +242,10 @@ type InstallSnapshotReply struct {
 	Term int
 }
 
+func (rf *Raft) channelApplySnapshot(msg *ApplyMsg) {
+	rf.applyCh <- *msg
+}
+
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -268,6 +272,14 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
+	msg := ApplyMsg{
+		CommandValid:  false,
+		SnapshotValid: true,
+		SnapshotIndex: args.LastIncludedIndex,
+		SnapshotTerm:  args.LastIncludedTerm,
+		Snapshot:      args.Data,
+	}
+
 	if args.LastIncludedIndex >= rf.commitIndex {
 		DPrintf("%s, cover log and snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.commitIndex)
 		rf.vlog = VirtualLog{
@@ -277,12 +289,12 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		}
 		rf.snapshot = args.Data
 		rf.commitIndex = args.LastIncludedIndex
-		rf.persist()
-		return
+	} else {
+		DPrintf("%s, apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.commitIndex)
+		rf.vlog.ApplySnapshot(args.LastIncludedIndex)
+		rf.snapshot = args.Data
 	}
-	DPrintf("%s, apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.commitIndex)
-	rf.vlog.ApplySnapshot(args.LastIncludedIndex)
-	rf.snapshot = args.Data
+	go rf.channelApplySnapshot(&msg)
 	rf.persist()
 }
 

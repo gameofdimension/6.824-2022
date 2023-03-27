@@ -111,6 +111,45 @@ func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
 	return true, &args
 }
 
+func (rf *Raft) sendSnapshot(server int) int {
+	rf.mu.Lock()
+	role := rf.role
+	if role != RoleLeader {
+		rf.mu.Unlock()
+		return -1
+	}
+	args := InstallSnapshotArgs{
+		Term:              rf.currentTerm,
+		LeaderId:          rf.me,
+		LastIncludedIndex: rf.vlog.LastIncludedIndex,
+		LastIncludedTerm:  rf.vlog.LastIncludedTerm,
+		Data:              rf.snapshot,
+	}
+	prefix := fmt.Sprintf("%d sendSnapshot %d, term:%d, LastIncludedIndex:%d, LastIncludedTerm:%d",
+		rf.me, server, rf.currentTerm, args.LastIncludedIndex, args.LastIncludedTerm)
+	rf.mu.Unlock()
+
+	reply := InstallSnapshotReply{}
+	rc := rf.sendInstallSnapshot(server, &args, &reply)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if !rc {
+		DPrintf("%s rpc fail", prefix)
+		return 1
+	}
+	if reply.Term > rf.currentTerm {
+		DPrintf("%s becomeFollower, reply term:%d", prefix, reply.Term)
+		rf.becomeFollower(reply.Term)
+		return 2
+	}
+	if args.LastIncludedIndex > rf.matchIndex[server] {
+		rf.matchIndex[server] = args.LastIncludedIndex
+		rf.nextIndex[server] = rf.matchIndex[server] + 1
+	}
+	return 0
+}
+
 func (rf *Raft) syncLog(server int) int {
 	ret, args := rf.prepareArgs(server)
 	if !ret {
@@ -225,7 +264,19 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 
 func (rf *Raft) replicateWorker(server int) {
 	for rf.killed() == false {
-		rc := rf.syncLog(server)
+		rf.mu.Lock()
+		sendSnapshot := false
+		if rf.nextIndex[server] <= rf.vlog.GetLastIncludedIndex() {
+			sendSnapshot = true
+		}
+		rf.mu.Unlock()
+
+		var rc int
+		if sendSnapshot {
+			rc = rf.sendSnapshot(server)
+		} else {
+			rc = rf.syncLog(server)
+		}
 		if rc < 0 {
 			time.Sleep(83 * time.Millisecond)
 		} else {
