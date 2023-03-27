@@ -299,6 +299,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
+	start := time.Now().UnixMilli()
 	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
+	DPrintf("Raft.InstallSnapshot, time: %d", time.Now().UnixMilli()-start)
 	return ok
 }

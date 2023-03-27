@@ -186,7 +186,8 @@ func (rf *Raft) syncLog(server int) int {
 			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], rf.vlog.NextIndex()))
 		}
 		if rf.nextIndex[server] < rf.vlog.GetLastIncludedIndex()+1 {
-			rf.nextIndex[server] = rf.vlog.GetLastIncludedIndex() + 1
+			DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries will send snapshot %d vs %d",
+				server, args.LeaderId, rf.currentTerm, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
 		}
 		return 3
 	}
@@ -266,6 +267,7 @@ func (rf *Raft) replicateWorker(server int) {
 	for rf.killed() == false {
 		rf.mu.Lock()
 		sendSnapshot := false
+		DPrintf("%d InstallSnapshot %d, %d vs %d", rf.me, server, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
 		if rf.nextIndex[server] <= rf.vlog.GetLastIncludedIndex() {
 			sendSnapshot = true
 		}
