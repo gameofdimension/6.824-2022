@@ -146,8 +146,8 @@ func (rf *Raft) syncLog(server int) int {
 		if rf.nextIndex[server] > rf.vlog.NextIndex() {
 			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], rf.vlog.NextIndex()))
 		}
-		if rf.nextIndex[server] < 1 {
-			rf.nextIndex[server] = 1
+		if rf.nextIndex[server] < rf.vlog.GetLastIncludedIndex()+1 {
+			rf.nextIndex[server] = rf.vlog.GetLastIncludedIndex() + 1
 		}
 		return 3
 	}

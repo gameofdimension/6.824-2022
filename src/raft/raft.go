@@ -88,7 +88,8 @@ type Raft struct {
 	// persistent state
 	currentTerm int
 	votedFor    int
-	vlog VirtualLog
+	vlog        VirtualLog
+	snapshot    []byte
 
 	leaderId    int
 	commitIndex int
@@ -128,7 +129,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.votedFor)
 	e.Encode(rf.vlog)
 	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	rf.persister.SaveStateAndSnapshot(data, rf.snapshot)
 }
 
 // restore previously persisted state.
@@ -169,7 +170,19 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-
+	rf.mu.Lock()
+	rf.vlog.ApplySnapshot(index)
+	rf.snapshot = snapshot
+	if index > rf.commitIndex {
+		rf.commitIndex = index
+	}
+	for idx := range rf.nextIndex {
+		if rf.nextIndex[idx] <= rf.vlog.GetLastIncludedIndex() {
+			rf.nextIndex[idx] = rf.vlog.GetLastIncludedIndex() + 1
+		}
+	}
+	rf.persist()
+	rf.mu.Unlock()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -198,7 +211,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	DPrintf("%d add command %v at term %d", rf.me, command, term)
-	rf.vlog.AddItem(LogEntry{Term: term, Command: command})
+	tmp := LogEntry{Term: term, Command: command}
+	rf.vlog.AddItem(&tmp)
+	DPrintf("leader %d next index to add %d", rf.me, rf.vlog.NextIndex())
 	rf.persist()
 
 	// Your code here (2B).
@@ -281,8 +296,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastApplied = 0
 
 	// initialize from state persisted before a crash
+	rf.snapshot = rf.persister.ReadSnapshot()
 	rf.readPersist(persister.ReadRaftState())
-	if rf.vlog.isEmpty() {
+	if rf.vlog.isPrime() {
 		rf.currentTerm = 0
 		rf.votedFor = -1
 		DPrintf("log empty after readPersist")
