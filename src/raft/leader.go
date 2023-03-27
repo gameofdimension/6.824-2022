@@ -33,6 +33,7 @@ func (rf *Raft) sendHeartBeat() bool {
 		}
 		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
+			self := rf.me
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return
@@ -40,9 +41,10 @@ func (rf *Raft) sendHeartBeat() bool {
 			rf.mu.Unlock()
 
 			reply := AppendEntriesReply{}
+			DPrintf("%d send heartbeat to %d begin", self, server)
 			rc := rf.sendAppendEntries(server, args, &reply)
+			DPrintf("%d send heartbeat to %d return: [rpc:%t,success:%t], %v, %v", self, server, rc, reply.Success, args, reply)
 			rf.mu.Lock()
-			DPrintf("%d send heartbeat to %d, ret: [rpc:%t,success:%t], %v, %v", rf.me, server, rc, reply.Success, args, reply)
 			if rc && reply.Term > rf.currentTerm {
 				rf.becomeFollower(reply.Term)
 			}
@@ -62,6 +64,15 @@ func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
 	self := rf.me
 	currentTerm := rf.currentTerm
 	leaderCommit := rf.commitIndex
+	DPrintf("sync worker %d of leader %d, term:%d, progress: %d vs %d",
+		server, self, currentTerm, rf.matchIndex[server], rf.vlog.NextIndex()-1)
+	if rf.matchIndex[server] > rf.vlog.NextIndex()-1 {
+		panic(fmt.Sprintf("match index exceed last index %d vs %d", rf.matchIndex[server], rf.vlog.NextIndex()-1))
+	}
+	if rf.matchIndex[server] == rf.vlog.NextIndex()-1 {
+		DPrintf("sync worker %d of leader %d, term:%d, no log to sync", server, self, currentTerm)
+		return false, nil
+	}
 
 	preLogIndex := rf.nextIndex[server] - 1
 	leaderNext := rf.vlog.NextIndex()
@@ -107,7 +118,9 @@ func (rf *Raft) syncLog(server int) int {
 	}
 
 	reply := AppendEntriesReply{}
+	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries begin", server, args.LeaderId, args.Term)
 	rc := rf.sendAppendEntries(server, args, &reply)
+	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries return %t", server, args.LeaderId, args.Term, rc)
 	if !rc {
 		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries rpc fail %t",
 			server, args.LeaderId, args.Term, rc)
@@ -182,6 +195,7 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 	if rf.role != RoleLeader {
 		return -1
 	}
+	DPrintf("tryUpdateCommitIndex %d, %d, %d, %v", rf.me, rf.commitIndex, rf.vlog.NextIndex()-1, rf.matchIndex)
 
 	for idx := rf.vlog.NextIndex() - 1; idx > rf.commitIndex; idx -= 1 {
 		term := rf.vlog.GetItem(idx).Term

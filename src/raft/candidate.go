@@ -110,9 +110,9 @@ func (rf *Raft) newSession() int {
 }
 
 func (rf *Raft) becomeCandidate() {
-	DPrintf("%d becomeCandidate at term %d", rf.me, rf.currentTerm)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("%d becomeCandidate at term %d", rf.me, rf.currentTerm)
 	rf.role = RoleCandidate
 }
 

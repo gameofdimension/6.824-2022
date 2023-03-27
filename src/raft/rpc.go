@@ -88,7 +88,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	start := time.Now().UnixMilli()
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	DPrintf("Raft.RequestVote, time: %d", time.Now().UnixMilli()-start)
 	return ok
 }
 
@@ -219,7 +221,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	start := time.Now().UnixMilli()
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	DPrintf("Raft.AppendEntries, time: %d", time.Now().UnixMilli()-start)
 	return ok
 }
 

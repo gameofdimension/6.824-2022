@@ -81,26 +81,6 @@ func (vl *VirtualLog) Slice(from int) []LogEntry {
 }
 
 func (vl *VirtualLog) CopyEntries(start int, entries []LogEntry) {
-	// leaderPrevLogIndex := args.PrevLogIndex
-	// leaderPrevLogTerm := args.PrevLogTerm
-	// if leaderPrevLogIndex >= len(rf.log) {
-	// 	reply.Success = false
-	// 	reply.Term = rf.currentTerm
-	// 	reply.XTerm = 0
-	// 	reply.XIndex = 0
-	// 	reply.XLen = len(rf.log)
-	// 	return
-	// }
-	// if leaderPrevLogTerm != rf.log[leaderPrevLogIndex].Term {
-	// 	reply.Success = false
-	// 	reply.Term = rf.currentTerm
-	// 	reply.XTerm = rf.log[leaderPrevLogIndex].Term
-	// 	reply.XIndex = firstIndexOfTerm(rf.log, leaderPrevLogIndex)
-	// 	reply.XLen = len(rf.log)
-	// 	return
-	// }
-	// index := leaderPrevLogIndex + 1
-
 	index := start
 	for i := 0; i < len(entries); i += 1 {
 		if index >= vl.NextIndex() {
