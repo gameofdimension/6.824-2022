@@ -1,6 +1,9 @@
 package raft
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
@@ -240,6 +243,47 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	prefix := fmt.Sprintf("InstallSnapshot role: %d, term: %d, id: %d, caller term: %d, caller id:%d, LastIncludedIndex: %d, LastIncludedTerm: %d",
+		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
+	DPrintf("%s", prefix)
+
+	term := args.Term
+	if term > rf.currentTerm {
+		rf.becomeFollower(term)
+		rf.leaderId = args.LeaderId
+	}
+	reply.Term = rf.currentTerm
+	if rf.role != RoleFollower {
+		DPrintf("%s, fail not follower", prefix)
+		return
+	}
+	if term < rf.currentTerm {
+		DPrintf("%s, fail for term %d vs %d", prefix, term, rf.currentTerm)
+		return
+	}
+	if args.LastIncludedIndex <= rf.vlog.GetLastIncludedIndex() {
+		DPrintf("%s, no need to apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.vlog.GetLastIncludedIndex())
+		return
+	}
+
+	if args.LastIncludedIndex >= rf.commitIndex {
+		DPrintf("%s, cover log and snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.commitIndex)
+		rf.vlog = VirtualLog{
+			LastIncludedIndex: args.LastIncludedIndex,
+			LastIncludedTerm:  args.LastIncludedTerm,
+			Data:              make([]LogEntry, 0),
+		}
+		rf.snapshot = args.Data
+		rf.commitIndex = args.LastIncludedIndex
+		rf.persist()
+		return
+	}
+	DPrintf("%s, apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.commitIndex)
+	rf.vlog.ApplySnapshot(args.LastIncludedIndex)
+	rf.snapshot = args.Data
+	rf.persist()
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
