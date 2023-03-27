@@ -91,10 +91,25 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	start := time.Now().UnixMilli()
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	DPrintf("Raft.RequestVote, time: %d", time.Now().UnixMilli()-start)
-	return ok
+	done := make(chan bool)
+	rf.mu.Lock()
+	self := rf.me
+	rf.mu.Unlock()
+	go func() {
+		start := time.Now().UnixMilli()
+		resp := RequestVoteReply{}
+		ok := rf.peers[server].Call("Raft.RequestVote", args, &resp)
+		DPrintf("Raft.RequestVote %d->%d, time: %d", self, server, time.Now().UnixMilli()-start)
+		*reply = resp
+		done <- ok
+	}()
+	select {
+	case ret := <-done:
+		return ret
+	case <-time.After(time.Second):
+		DPrintf("Raft.RequestVote %d->%d, timeout", self, server)
+		return false
+	}
 }
 
 type AppendEntriesArgs struct {
@@ -145,8 +160,9 @@ func (rf *Raft) firstTangibleIndex() (int, int) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d",
+	prefix := fmt.Sprintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d",
 		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
+	DPrintf("%s begin", prefix)
 
 	term := args.Term
 	if term > rf.currentTerm {
@@ -158,16 +174,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.leaderId = args.LeaderId
 	}
 	if rf.role != RoleFollower {
-		DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d, fail not follower",
-			rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
+		DPrintf("%s fail not follower", prefix)
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		reply.XTerm = -1
 		return
 	}
 	if term < rf.currentTerm {
-		DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d, fail for term %d vs %d",
-			rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries), term, rf.currentTerm)
+		DPrintf("%s fail for term %d vs %d", prefix, term, rf.currentTerm)
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		reply.XTerm = -1
@@ -182,6 +196,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	lastIncludedIndex := rf.vlog.GetLastIncludedIndex()
 	nextIndex := rf.vlog.NextIndex()
 	if leaderPrevLogIndex >= nextIndex {
+		DPrintf("%s leader too long %d vs %d", prefix, leaderPrevLogIndex, nextIndex)
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		reply.XTerm = 0
@@ -190,6 +205,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	if leaderPrevLogIndex < lastIncludedIndex {
+		DPrintf("%s leader pre in snapshot %d vs %d", prefix, leaderPrevLogIndex, lastIncludedIndex)
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		reply.XIndex, reply.XTerm = rf.firstTangibleIndex()
@@ -201,9 +217,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		if leaderPrevLogIndex > lastIncludedIndex {
+			DPrintf("%s term %d vs %d not match1 %d vs %d", prefix, leaderPrevLogTerm, myTerm, leaderPrevLogIndex, lastIncludedIndex)
 			reply.XTerm = myTerm
 			reply.XIndex = rf.firstIndexOfTerm(leaderPrevLogIndex)
 		} else {
+			DPrintf("%s term %d vs %d not match2 %d vs %d", prefix, leaderPrevLogTerm, myTerm, leaderPrevLogIndex, lastIncludedIndex)
 			reply.XIndex, reply.XTerm = rf.firstTangibleIndex()
 		}
 		reply.XLen = nextIndex
@@ -219,15 +237,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	reply.Success = true
 	reply.Term = rf.currentTerm
-	DPrintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d, successful",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
+	DPrintf("%s successful", prefix)
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	start := time.Now().UnixMilli()
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	DPrintf("Raft.AppendEntries, time: %d", time.Now().UnixMilli()-start)
-	return ok
+	done := make(chan bool)
+	rf.mu.Lock()
+	self := rf.me
+	rf.mu.Unlock()
+	go func() {
+		start := time.Now().UnixMilli()
+		resp := AppendEntriesReply{}
+		ok := rf.peers[server].Call("Raft.AppendEntries", args, &resp)
+		DPrintf("Raft.AppendEntries %d->%d, time: %d", self, server, time.Now().UnixMilli()-start)
+		*reply = resp
+		done <- ok
+	}()
+	select {
+	case ret := <-done:
+		return ret
+	case <-time.After(time.Second):
+		DPrintf("Raft.AppendEntries %d->%d, timeout", self, server)
+		return false
+	}
 }
 
 type InstallSnapshotArgs struct {

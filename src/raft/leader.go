@@ -125,7 +125,7 @@ func (rf *Raft) sendSnapshot(server int) int {
 		LastIncludedTerm:  rf.vlog.LastIncludedTerm,
 		Data:              rf.snapshot,
 	}
-	prefix := fmt.Sprintf("%d sendSnapshot %d, term:%d, LastIncludedIndex:%d, LastIncludedTerm:%d",
+	prefix := fmt.Sprintf("%d sendInstallSnapshot %d, term:%d, LastIncludedIndex:%d, LastIncludedTerm:%d",
 		rf.me, server, rf.currentTerm, args.LastIncludedIndex, args.LastIncludedTerm)
 	rf.mu.Unlock()
 
@@ -143,6 +143,7 @@ func (rf *Raft) sendSnapshot(server int) int {
 		rf.becomeFollower(reply.Term)
 		return 2
 	}
+	DPrintf("%s, assume successful", prefix)
 	if args.LastIncludedIndex > rf.matchIndex[server] {
 		rf.matchIndex[server] = args.LastIncludedIndex
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
@@ -271,7 +272,7 @@ func (rf *Raft) replicateWorker(server int) {
 			sendSnapshot = true
 		}
 		if rf.role == RoleLeader {
-			DPrintf("%d InstallSnapshot %d, %d vs %d, sendSnapshot:%t",
+			DPrintf("%d replicateWorker %d, %d vs %d, send snapshot:%t",
 				rf.me, server, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}
 		rf.mu.Unlock()

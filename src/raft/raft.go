@@ -20,6 +20,7 @@ package raft
 import (
 	//	"bytes"
 	"bytes"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -213,7 +214,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	DPrintf("%d add command %v at term %d", rf.me, command, term)
 	tmp := LogEntry{Term: term, Command: command}
 	rf.vlog.AddItem(&tmp)
-	DPrintf("leader %d next index to add %d", rf.me, rf.vlog.NextIndex())
+	DPrintf("leader %d next index to add: %d", rf.me, rf.vlog.NextIndex())
 	rf.persist()
 
 	// Your code here (2B).
@@ -287,6 +288,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	// rand.Seed(42)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	rf.applyCh = applyCh
 	rf.role = RoleFollower
 	rf.currentTerm = 0
