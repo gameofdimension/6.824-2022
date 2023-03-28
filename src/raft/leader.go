@@ -70,7 +70,7 @@ func (rf *Raft) prepareArgs(server int, roundId string) (bool, *AppendEntriesArg
 	self := rf.me
 	currentTerm := rf.currentTerm
 	leaderCommit := rf.commitIndex
-	prefix := fmt.Sprintf("%s leader %d of [%d,%d] sync worker %d",
+	prefix := fmt.Sprintf("APPEND%s %d of [%d,%d] to %d",
 		roundId, self, currentTerm, role, server)
 	DPrintf("%s prepareArgs progress now [%d vs %d]", prefix, rf.matchIndex[server], rf.vlog.NextIndex()-1)
 	if rf.matchIndex[server] > rf.vlog.NextIndex()-1 {
@@ -131,8 +131,8 @@ func (rf *Raft) sendSnapshot(server int, roundId string) int {
 		LastIncludedTerm:  rf.vlog.LastIncludedTerm,
 		Data:              rf.snapshot,
 	}
-	prefix := fmt.Sprintf("%s %d sendInstallSnapshot %d, term:%d, LastIncludedIndex:%d, LastIncludedTerm:%d",
-		roundId, rf.me, server, rf.currentTerm, args.LastIncludedIndex, args.LastIncludedTerm)
+	prefix := fmt.Sprintf("SNAP%s %d of [%d, %d] to %d, args [%d, %d]",
+		roundId, rf.me, rf.currentTerm, rf.role, server, args.LastIncludedTerm, args.LastIncludedIndex)
 	rf.mu.Unlock()
 
 	reply := InstallSnapshotReply{}
@@ -163,12 +163,13 @@ func (rf *Raft) syncLog(server int, roundId string) int {
 		return -1
 	}
 
+	prefix = fmt.Sprintf("%s args [%d, %d]", prefix, args.PrevLogTerm, args.PrevLogIndex)
 	reply := AppendEntriesReply{}
 	DPrintf("%s sendAppendEntries begin", prefix)
 	rc := rf.sendAppendEntries(server, args, &reply)
-	DPrintf("%s sendAppendEntries return %t", prefix, rc)
+	DPrintf("%s sendAppendEntries rpc return %t", prefix, rc)
 	if !rc {
-		DPrintf("%s sendAppendEntries rpc fail %t", prefix, rc)
+		DPrintf("%s sendAppendEntries rpc fail", prefix)
 		return 1
 	}
 
@@ -278,7 +279,7 @@ func (rf *Raft) replicateWorker(server int) {
 			sendSnapshot = true
 		}
 		if rf.role == RoleLeader {
-			DPrintf("%s replicate %d of [%d, %d] to %d, [%d vs %d], will send snapshot:%t",
+			DPrintf("REP%s replicate %d of [%d, %d] to %d, [%d vs %d], will send snapshot:%t",
 				roundId, rf.me, rf.currentTerm, rf.role, server, rf.nextIndex[server],
 				rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}
