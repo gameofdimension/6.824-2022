@@ -167,7 +167,7 @@ func (rf *Raft) becomeLeader() {
 	}
 
 	// insert a noop
-	tmp := LogEntry{Term: rf.currentTerm, Command: nil}
-	rf.vlog.AddItem(&tmp)
+	// tmp := LogEntry{Term: rf.currentTerm, Command: nil}
+	// rf.vlog.AddItem(&tmp)
 	rf.persist()
 }
