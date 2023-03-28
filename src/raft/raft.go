@@ -245,6 +245,7 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
+	round := 0
 	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
@@ -258,7 +259,8 @@ func (rf *Raft) ticker() {
 
 		if role == RoleFollower {
 			if rf.leaderHang(lastFromLeaderAt) {
-				rf.startElection()
+				round += 1
+				rf.startElection(round)
 			} else {
 				span := rand.Intn(Delta) + ElectionTimeout
 				time.Sleep(time.Duration(span) * time.Millisecond)

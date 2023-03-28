@@ -70,7 +70,7 @@ func (rf *Raft) prepareArgs(server int, roundId string) (bool, *AppendEntriesArg
 	self := rf.me
 	currentTerm := rf.currentTerm
 	leaderCommit := rf.commitIndex
-	prefix := fmt.Sprintf("APPEND%s %d of [%d,%d] to %d",
+	prefix := fmt.Sprintf("APPND%s %d of [%d,%d] to %d",
 		roundId, self, currentTerm, role, server)
 	DPrintf("%s prepareArgs progress now [%d vs %d]", prefix, rf.matchIndex[server], rf.vlog.NextIndex()-1)
 	if rf.matchIndex[server] > rf.vlog.NextIndex()-1 {
