@@ -21,7 +21,7 @@ func (rf *Raft) makeHeartBeatArgs() (RoleType, AppendEntriesArgs) {
 	return rf.role, args
 }
 
-func (rf *Raft) sendHeartBeat() bool {
+func (rf *Raft) sendHeartBeat(roundId string) bool {
 	role, req := rf.makeHeartBeatArgs()
 	if role != RoleLeader {
 		return false
@@ -34,6 +34,7 @@ func (rf *Raft) sendHeartBeat() bool {
 		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
 			self := rf.me
+			prefix := fmt.Sprintf("%s heartbeat from %d of [%d, %d] to", roundId, self, rf.currentTerm, rf.role)
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return
@@ -41,15 +42,16 @@ func (rf *Raft) sendHeartBeat() bool {
 			rf.mu.Unlock()
 
 			reply := AppendEntriesReply{}
-			DPrintf("%d send heartbeat to %d begin", self, server)
+			DPrintf("%s %d begin", prefix, server)
 			rc := rf.sendAppendEntries(server, args, &reply)
 			if rc {
-				DPrintf("%d send heartbeat to %d success:%t, %v, %v", self, server, reply.Success, args, reply)
+				DPrintf("%s %d success:%t, %v, %v", prefix, server, reply.Success, *args, reply)
 			} else {
-				DPrintf("%d send heartbeat to %d rpc fail", self, server)
+				DPrintf("%s %d rpc fail", prefix, server)
 			}
 			rf.mu.Lock()
 			if rc && reply.Term > rf.currentTerm {
+				DPrintf("%s %d become follower %d, %d vs %d", prefix, server, self, reply.Term, rf.currentTerm)
 				rf.becomeFollower(reply.Term)
 			}
 			rf.mu.Unlock()
@@ -58,24 +60,25 @@ func (rf *Raft) sendHeartBeat() bool {
 	return true
 }
 
-func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
+func (rf *Raft) prepareArgs(server int, roundId string) (bool, *AppendEntriesArgs, string) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	role := rf.role
 	if role != RoleLeader {
-		return false, nil
+		return false, nil, ""
 	}
 	self := rf.me
 	currentTerm := rf.currentTerm
 	leaderCommit := rf.commitIndex
-	DPrintf("sync worker %d of leader %d, term:%d, progress: %d vs %d",
-		server, self, currentTerm, rf.matchIndex[server], rf.vlog.NextIndex()-1)
+	prefix := fmt.Sprintf("%s leader %d of [%d,%d] sync worker %d",
+		roundId, self, currentTerm, role, server)
+	DPrintf("%s prepareArgs progress now [%d vs %d]", prefix, rf.matchIndex[server], rf.vlog.NextIndex()-1)
 	if rf.matchIndex[server] > rf.vlog.NextIndex()-1 {
 		panic(fmt.Sprintf("match index exceed last index %d vs %d", rf.matchIndex[server], rf.vlog.NextIndex()-1))
 	}
 	if rf.matchIndex[server] == rf.vlog.NextIndex()-1 {
-		DPrintf("sync worker %d of leader %d, term:%d, no log to sync", server, self, currentTerm)
-		return false, nil
+		DPrintf("%s prepareArgs no log to sync [%d vs %d]", prefix, rf.matchIndex[server], rf.vlog.NextIndex()-1)
+		return false, nil, ""
 	}
 
 	preLogIndex := rf.nextIndex[server] - 1
@@ -85,9 +88,8 @@ func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
 			leaderNext, rf.me, server, role == RoleLeader, rf.nextIndex[server]))
 	}
 	preLogTerm := rf.vlog.GetTermAtIndex(preLogIndex)
-	DPrintf("sync worker %d of leader %d, term:%d, nextIndex: %d",
-		server, self, currentTerm, rf.nextIndex[server])
 	entries := rf.vlog.Slice(rf.nextIndex[server])
+	DPrintf("%s prepareArgs will send log from %d of len %d", prefix, rf.nextIndex[server], len(entries))
 
 	// 下面这个优化看起来可以节省不必要的 rpc 通信，事实上是有害的
 	// 因为新 leader 上任之后，会将其的 nextIndex 初始化为 log
@@ -112,10 +114,10 @@ func (rf *Raft) prepareArgs(server int) (bool, *AppendEntriesArgs) {
 		Entries:      entries,
 		LeaderCommit: leaderCommit,
 	}
-	return true, &args
+	return true, &args, prefix
 }
 
-func (rf *Raft) sendSnapshot(server int) int {
+func (rf *Raft) sendSnapshot(server int, roundId string) int {
 	rf.mu.Lock()
 	role := rf.role
 	if role != RoleLeader {
@@ -129,8 +131,8 @@ func (rf *Raft) sendSnapshot(server int) int {
 		LastIncludedTerm:  rf.vlog.LastIncludedTerm,
 		Data:              rf.snapshot,
 	}
-	prefix := fmt.Sprintf("%d sendInstallSnapshot %d, term:%d, LastIncludedIndex:%d, LastIncludedTerm:%d",
-		rf.me, server, rf.currentTerm, args.LastIncludedIndex, args.LastIncludedTerm)
+	prefix := fmt.Sprintf("%s %d sendInstallSnapshot %d, term:%d, LastIncludedIndex:%d, LastIncludedTerm:%d",
+		roundId, rf.me, server, rf.currentTerm, args.LastIncludedIndex, args.LastIncludedTerm)
 	rf.mu.Unlock()
 
 	reply := InstallSnapshotReply{}
@@ -155,33 +157,30 @@ func (rf *Raft) sendSnapshot(server int) int {
 	return 0
 }
 
-func (rf *Raft) syncLog(server int) int {
-	ret, args := rf.prepareArgs(server)
+func (rf *Raft) syncLog(server int, roundId string) int {
+	ret, args, prefix := rf.prepareArgs(server, roundId)
 	if !ret {
 		return -1
 	}
 
 	reply := AppendEntriesReply{}
-	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries begin", server, args.LeaderId, args.Term)
+	DPrintf("%s sendAppendEntries begin", prefix)
 	rc := rf.sendAppendEntries(server, args, &reply)
-	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries return %t", server, args.LeaderId, args.Term, rc)
+	DPrintf("%s sendAppendEntries return %t", prefix, rc)
 	if !rc {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries rpc fail %t",
-			server, args.LeaderId, args.Term, rc)
+		DPrintf("%s sendAppendEntries rpc fail %t", prefix, rc)
 		return 1
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries becomeFollower, reply term:%d",
-			server, args.LeaderId, rf.currentTerm, reply.Term)
+		DPrintf("%s sendAppendEntries becomeFollower, reply term:%d", prefix, reply.Term)
 		rf.becomeFollower(reply.Term)
 		return 2
 	}
 	if !reply.Success {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries not success %v",
-			server, args.LeaderId, rf.currentTerm, reply)
+		DPrintf("%s sendAppendEntries not success %v", prefix, reply)
 		if reply.XTerm < 0 {
 			return -3
 		}
@@ -191,8 +190,8 @@ func (rf *Raft) syncLog(server int) int {
 			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], rf.vlog.NextIndex()))
 		}
 		if rf.nextIndex[server] < rf.vlog.GetLastIncludedIndex()+1 {
-			DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries will send snapshot %d vs %d",
-				server, args.LeaderId, rf.currentTerm, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
+			DPrintf("%s sendAppendEntries will send snapshot %d vs %d",
+				prefix, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
 		}
 		return 3
 	}
@@ -202,10 +201,10 @@ func (rf *Raft) syncLog(server int) int {
 		panic(fmt.Sprintf("nextIndex fail %d, %d, %d\n", server, rf.nextIndex[server], rf.vlog.NextIndex()))
 	}
 	if len(args.Entries) <= 0 {
-		DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries empty entry", server, args.LeaderId, rf.currentTerm)
+		DPrintf("%s sendAppendEntries empty entry", prefix)
 		return -2
 	}
-	DPrintf("sync worker %d of leader %d, term:%d, sendAppendEntries success", server, args.LeaderId, rf.currentTerm)
+	DPrintf("%s sendAppendEntries success", prefix)
 	return 0
 }
 
@@ -269,23 +268,27 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 }
 
 func (rf *Raft) replicateWorker(server int) {
+	round := 0
 	for rf.killed() == false {
+		round += 1
+		roundId := fmt.Sprintf("%016d", round)
 		rf.mu.Lock()
 		sendSnapshot := false
 		if rf.nextIndex[server] <= rf.vlog.GetLastIncludedIndex() {
 			sendSnapshot = true
 		}
 		if rf.role == RoleLeader {
-			DPrintf("%d replicateWorker %d, %d vs %d, send snapshot:%t",
-				rf.me, server, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex(), sendSnapshot)
+			DPrintf("%s replicate %d of [%d, %d] to %d, [%d vs %d], will send snapshot:%t",
+				roundId, rf.me, rf.currentTerm, rf.role, server, rf.nextIndex[server],
+				rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}
 		rf.mu.Unlock()
 
 		var rc int
 		if sendSnapshot {
-			rc = rf.sendSnapshot(server)
+			rc = rf.sendSnapshot(server, roundId)
 		} else {
-			rc = rf.syncLog(server)
+			rc = rf.syncLog(server, roundId)
 		}
 		if rc < 0 {
 			time.Sleep(83 * time.Millisecond)
@@ -303,8 +306,11 @@ func (rf *Raft) commitIndexWorker() {
 }
 
 func (rf *Raft) heartBeatWorker() {
+	round := 0
 	for rf.killed() == false {
-		rc := rf.sendHeartBeat()
+		round += 1
+		roundId := fmt.Sprintf("%016d", round)
+		rc := rf.sendHeartBeat(roundId)
 		if !rc {
 			time.Sleep(7 * time.Millisecond)
 		} else {
