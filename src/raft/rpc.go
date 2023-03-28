@@ -29,13 +29,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	selfLogIndex, selfLogTerm := rf.vlog.GetLastIndexTerm()
-	prefix := fmt.Sprintf("%s %d of [%d, %d, %d] RequestVote %d of [%d, %d, %d], role: %d, votedFor: %d",
-		RandStr(16), args.CandidateId, args.Term, args.LastLogTerm, args.LastLogIndex,
-		rf.me, rf.currentTerm, selfLogTerm, selfLogIndex, rf.role, rf.votedFor)
+	prefix := fmt.Sprintf("%s InstallSnapshot %d of [%d,%d], %d, %d called by %d of [%d], %d, %d, votedFor: %d",
+		RandStr(16), rf.me, rf.currentTerm, rf.role, selfLogTerm, selfLogIndex, args.CandidateId,
+		args.Term, args.LastLogTerm, args.LastLogIndex, rf.votedFor)
 	DPrintf("%s start", prefix)
 
 	term := args.Term
 	if term > rf.currentTerm {
+		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 	}
 
@@ -135,6 +136,7 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.role = RoleFollower
+	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.persist()
 }
 
@@ -162,8 +164,8 @@ func (rf *Raft) firstTangibleIndex() (int, int) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	prefix := fmt.Sprintf("%s AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d",
-		RandStr(16), rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
+	prefix := fmt.Sprintf("%s AppendEntries %d of [%d,%d] called by %d of [%d], len: %d",
+		RandStr(16), rf.me, rf.currentTerm, rf.role, args.LeaderId, args.Term, len(args.Entries))
 	DPrintf("%s begin", prefix)
 
 	term := args.Term
@@ -172,6 +174,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// candidate 1 和 candidate 2 都进入了同一个 term T 进行拉票，1 的动作更快一点成了 leader，
 		// 然后给发送心跳，在 ">=" 的逻辑下，其 currentTerm 不变还是 T ，但是 votedFor 会被重置。
 		// 这时 2 就又有机会成为 term T 的 leader ，而这是不允许的，相反 ">" 可以防止这样的情况
+		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 		rf.leaderId = args.LeaderId
 	}
@@ -283,12 +286,13 @@ func (rf *Raft) channelApplySnapshot(msg *ApplyMsg) {
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	prefix := fmt.Sprintf("%s InstallSnapshot role: %d, term: %d, id: %d, caller term: %d, caller id:%d, LastIncludedIndex: %d, LastIncludedTerm: %d",
-		RandStr(16), rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
+	prefix := fmt.Sprintf("%s InstallSnapshot %d of [%d,%d] called by %d of [%d], LastIncludedIndex: %d, LastIncludedTerm: %d",
+		RandStr(16), rf.me, rf.currentTerm, rf.role, args.LeaderId, args.Term, args.LastIncludedIndex, args.LastIncludedTerm)
 	DPrintf("%s", prefix)
 
 	term := args.Term
 	if term > rf.currentTerm {
+		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 		rf.leaderId = args.LeaderId
 	}

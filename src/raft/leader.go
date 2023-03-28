@@ -34,7 +34,7 @@ func (rf *Raft) sendHeartBeat(roundId string) bool {
 		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
 			self := rf.me
-			prefix := fmt.Sprintf("HBEAT%s from %d of [%d, %d] to", roundId, self, rf.currentTerm, rf.role)
+			prefix := fmt.Sprintf("HBEAT%s from %d of [%d,%d] to", roundId, self, rf.currentTerm, rf.role)
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return
@@ -51,7 +51,7 @@ func (rf *Raft) sendHeartBeat(roundId string) bool {
 			}
 			rf.mu.Lock()
 			if rc && reply.Term > rf.currentTerm {
-				DPrintf("%s %d become follower %d, %d vs %d", prefix, server, self, reply.Term, rf.currentTerm)
+				DPrintf("%s %d becomeFollower %d, %d vs %d", prefix, server, self, reply.Term, rf.currentTerm)
 				rf.becomeFollower(reply.Term)
 			}
 			rf.mu.Unlock()
@@ -131,7 +131,7 @@ func (rf *Raft) sendSnapshot(server int, roundId string) int {
 		LastIncludedTerm:  rf.vlog.LastIncludedTerm,
 		Data:              rf.snapshot,
 	}
-	prefix := fmt.Sprintf("SNAP%s %d of [%d, %d] to %d, args [%d, %d]",
+	prefix := fmt.Sprintf("SSNAP%s %d of [%d,%d] to %d, args [%d, %d]",
 		roundId, rf.me, rf.currentTerm, rf.role, server, args.LastIncludedTerm, args.LastIncludedIndex)
 	rf.mu.Unlock()
 
@@ -163,7 +163,7 @@ func (rf *Raft) syncLog(server int, roundId string) int {
 		return -1
 	}
 
-	prefix = fmt.Sprintf("%s args [%d, %d]", prefix, args.PrevLogTerm, args.PrevLogIndex)
+	prefix = fmt.Sprintf("%s args [%d,%d]", prefix, args.PrevLogTerm, args.PrevLogIndex)
 	reply := AppendEntriesReply{}
 	DPrintf("%s sendAppendEntries begin", prefix)
 	rc := rf.sendAppendEntries(server, args, &reply)
@@ -240,7 +240,7 @@ func (rf *Raft) tryUpdateCommitIndex(round int) int {
 	if rf.role != RoleLeader {
 		return -1
 	}
-	prefix := fmt.Sprintf("UPCOM%016d %d of [%d, %d], diff: [%d vs %d], match index: %v",
+	prefix := fmt.Sprintf("UPCOM%016d %d of [%d,%d], diff: [%d vs %d], match index: %v",
 		round, rf.me, rf.currentTerm, rf.role, rf.commitIndex, rf.vlog.NextIndex()-1, rf.matchIndex)
 	DPrintf("%s start", prefix)
 
@@ -282,7 +282,7 @@ func (rf *Raft) replicateWorker(server int) {
 			sendSnapshot = true
 		}
 		if rf.role == RoleLeader {
-			DPrintf("REPLI%s replicate %d of [%d, %d] to %d, [%d vs %d], will send snapshot:%t",
+			DPrintf("REPLI%s %d of [%d,%d] to %d, [%d vs %d], will send snapshot:%t",
 				roundId, rf.me, rf.currentTerm, rf.role, server, rf.nextIndex[server],
 				rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}

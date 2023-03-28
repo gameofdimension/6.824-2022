@@ -61,7 +61,7 @@ func (rf *Raft) newSession(round int, session int) int {
 				return
 			}
 			if reply.Term > currentTerm {
-				DPrintf("%s call vote %d degraded [%d vs %d]", prefix, server, reply.Term, currentTerm)
+				DPrintf("%s call vote %d becomeFollower [%d vs %d]", prefix, server, reply.Term, currentTerm)
 				rf.mu.Lock()
 				rf.becomeFollower(reply.Term)
 				rf.leaderId = -1
@@ -139,7 +139,6 @@ func (rf *Raft) startElection(round int) {
 		}
 
 		rf.electionStartAt = time.Now().UnixMilli()
-		span := rand.Intn(Delta) + ElectionTimeout
 		DPrintf("%s session %d start", prefix, session)
 		ret := rf.newSession(round, session)
 		DPrintf("%s session %d return: %d, cost time: %d", prefix, session, ret, time.Now().UnixMilli()-rf.electionStartAt)
@@ -147,10 +146,11 @@ func (rf *Raft) startElection(round int) {
 		if ret == 0 && rf.role == RoleCandidate {
 			rf.becomeLeader()
 			rf.mu.Unlock()
-			DPrintf("%s session %d become leader of term %d", prefix, session, rf.currentTerm)
+			DPrintf("%s session %d becomeLeader of term %d", prefix, session, rf.currentTerm)
 			break
 		}
 		rf.mu.Unlock()
+		span := rand.Intn(Delta) + ElectionTimeout
 		time.Sleep(time.Duration(span) * time.Millisecond)
 	}
 }

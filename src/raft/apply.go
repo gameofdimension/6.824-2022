@@ -23,7 +23,7 @@ func (rf *Raft) applyLog() {
 
 func (rf *Raft) nextToApply(round int) (bool, int, *ApplyMsg) {
 	roundId := fmt.Sprintf("APPLY%016d", round)
-	prefix := fmt.Sprintf("%s %d of [%d, %d], progress [%d vs %d]",
+	prefix := fmt.Sprintf("%s %d of [%d,%d], progress [%d vs %d]",
 		roundId, rf.me, rf.currentTerm, rf.role, rf.lastApplied, rf.commitIndex)
 	if rf.lastApplied > rf.commitIndex {
 		panic(fmt.Sprintf("%s lastApplied bigger than commitIndex", prefix))
