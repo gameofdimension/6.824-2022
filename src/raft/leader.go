@@ -34,7 +34,7 @@ func (rf *Raft) sendHeartBeat(roundId string) bool {
 		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
 			self := rf.me
-			prefix := fmt.Sprintf("BEAT%s from %d of [%d, %d] to", roundId, self, rf.currentTerm, rf.role)
+			prefix := fmt.Sprintf("HBEAT%s from %d of [%d, %d] to", roundId, self, rf.currentTerm, rf.role)
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return
@@ -234,13 +234,15 @@ func (rf *Raft) computeNextIndex(xTerm int, xIndex int, Xlen int, preLogIndex in
 	return index + 1
 }
 
-func (rf *Raft) tryUpdateCommitIndex() int {
+func (rf *Raft) tryUpdateCommitIndex(round int) int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.role != RoleLeader {
 		return -1
 	}
-	DPrintf("tryUpdateCommitIndex %d, %d, %d, %v", rf.me, rf.commitIndex, rf.vlog.NextIndex()-1, rf.matchIndex)
+	prefix := fmt.Sprintf("UPCOM%016d %d of [%d, %d, %d], state: %d, %v",
+		round, rf.me, rf.currentTerm, rf.role, rf.commitIndex, rf.vlog.NextIndex(), rf.matchIndex)
+	DPrintf("%s start", prefix)
 
 	for idx := rf.vlog.NextIndex() - 1; idx > rf.commitIndex; idx -= 1 {
 		term := rf.vlog.GetItem(idx).Term
@@ -260,11 +262,12 @@ func (rf *Raft) tryUpdateCommitIndex() int {
 			}
 		}
 		if 2*matchCount > len(rf.peers) {
-			DPrintf("leader %d update commit index %d->%d", rf.me, rf.commitIndex, idx)
+			DPrintf("%s update %d->%d", prefix, rf.commitIndex, idx)
 			rf.commitIndex = idx
 			return 0
 		}
 	}
+	DPrintf("%s no action", prefix)
 	return 1
 }
 
@@ -279,7 +282,7 @@ func (rf *Raft) replicateWorker(server int) {
 			sendSnapshot = true
 		}
 		if rf.role == RoleLeader {
-			DPrintf("REP%s replicate %d of [%d, %d] to %d, [%d vs %d], will send snapshot:%t",
+			DPrintf("REPLI%s replicate %d of [%d, %d] to %d, [%d vs %d], will send snapshot:%t",
 				roundId, rf.me, rf.currentTerm, rf.role, server, rf.nextIndex[server],
 				rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}
@@ -300,8 +303,10 @@ func (rf *Raft) replicateWorker(server int) {
 }
 
 func (rf *Raft) commitIndexWorker() {
+	round := 0
 	for rf.killed() == false {
-		rf.tryUpdateCommitIndex()
+		round += 1
+		rf.tryUpdateCommitIndex(round)
 		time.Sleep(47 * time.Millisecond)
 	}
 }
