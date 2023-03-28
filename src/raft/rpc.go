@@ -59,6 +59,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if canVote(rf.votedFor, candidateId, candidateLogTerm, candidateLogIndex, selfLogTerm, selfLogIndex) {
 		DPrintf("%s grant vote", prefix)
 		rf.votedFor = candidateId
+		rf.lastGrantVote = time.Now().UnixMilli()
 		reply.VoteGranted = true
 		reply.Term = rf.currentTerm
 		return
@@ -194,6 +195,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
+	rf.leaderId = args.LeaderId
 
 	leaderPrevLogIndex := args.PrevLogIndex
 	leaderPrevLogTerm := args.PrevLogTerm
@@ -307,6 +309,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
+	rf.leaderId = args.LeaderId
+	
 	if args.LastIncludedIndex <= rf.vlog.GetLastIncludedIndex() {
 		DPrintf("%s, no need to apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.vlog.GetLastIncludedIndex())
 		return

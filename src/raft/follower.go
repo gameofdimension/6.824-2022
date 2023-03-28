@@ -9,9 +9,9 @@ func canVote(votedFor int, candidateId int, candidateTerm int, candidateIndex in
 	return isMoreUpToDate(candidateTerm, candidateIndex, term, index)
 }
 
-func (rf *Raft) leaderHang(lastRecvHeartBeat int64) bool {
+func (rf *Raft) leaderHang(lastRecvHeartBeat int64, lastGrantVote int64) bool {
 	nowMills := time.Now().UnixMilli()
-	if nowMills-int64(lastRecvHeartBeat) > ElectionTimeout {
+	if nowMills-lastRecvHeartBeat > ElectionTimeout && nowMills-lastGrantVote > ElectionTimeout {
 		return true
 	}
 	return false

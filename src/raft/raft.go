@@ -99,9 +99,9 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
-	lastSendHeartBeat int64
-	lastFromLeaderAt  int64
-	electionStartAt   int64
+	lastGrantVote    int64
+	lastFromLeaderAt int64
+	electionStartAt  int64
 }
 
 // return currentTerm and whether this server
@@ -255,10 +255,11 @@ func (rf *Raft) ticker() {
 		rf.mu.Lock()
 		role := rf.role
 		lastFromLeaderAt := rf.lastFromLeaderAt
+		lastGrantVote := rf.lastGrantVote
 		rf.mu.Unlock()
 
 		if role == RoleFollower {
-			if rf.leaderHang(lastFromLeaderAt) {
+			if rf.leaderHang(lastFromLeaderAt, lastGrantVote) {
 				round += 1
 				rf.startElection(round)
 			} else {
