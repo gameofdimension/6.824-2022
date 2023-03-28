@@ -240,8 +240,8 @@ func (rf *Raft) tryUpdateCommitIndex(round int) int {
 	if rf.role != RoleLeader {
 		return -1
 	}
-	prefix := fmt.Sprintf("UPCOM%016d %d of [%d, %d, %d], state: %d, %v",
-		round, rf.me, rf.currentTerm, rf.role, rf.commitIndex, rf.vlog.NextIndex(), rf.matchIndex)
+	prefix := fmt.Sprintf("UPCOM%016d %d of [%d, %d], diff: [%d vs %d], match index: %v",
+		round, rf.me, rf.currentTerm, rf.role, rf.commitIndex, rf.vlog.NextIndex()-1, rf.matchIndex)
 	DPrintf("%s start", prefix)
 
 	for idx := rf.vlog.NextIndex() - 1; idx > rf.commitIndex; idx -= 1 {
