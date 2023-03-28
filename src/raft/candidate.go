@@ -34,7 +34,7 @@ func (rf *Raft) newSession(round int, session int) int {
 		LastLogIndex: lastLogIndex,
 		LastLogTerm:  lastLogTerm,
 	}
-	prefix := fmt.Sprintf("SESSN%08d:%07d %d of [%d, %d], args: [%d, %d]",
+	prefix := fmt.Sprintf("SESSN%08d:%07d %d of [%d,%d], args: [%d,%d]",
 		round, session, rf.me, rf.currentTerm, rf.role, lastLogTerm, lastLogIndex)
 	rf.mu.Unlock()
 
@@ -141,6 +141,9 @@ func (rf *Raft) startElection(round int) {
 		rf.electionStartAt = time.Now().UnixMilli()
 		DPrintf("%s session %d start", prefix, session)
 		ret := rf.newSession(round, session)
+
+		// term updated
+		prefix = fmt.Sprintf("ELECT%016d %d of [%d,%d]", round, rf.me, rf.currentTerm, role)
 		DPrintf("%s session %d return: %d, cost time: %d", prefix, session, ret, time.Now().UnixMilli()-rf.electionStartAt)
 		rf.mu.Lock()
 		if ret == 0 && rf.role == RoleCandidate {
@@ -162,5 +165,9 @@ func (rf *Raft) becomeLeader() {
 		rf.nextIndex[i] = rf.vlog.NextIndex()
 		rf.matchIndex[i] = 0
 	}
+
+	// insert a noop
+	tmp := LogEntry{Term: rf.currentTerm, Command: nil}
+	rf.vlog.AddItem(&tmp)
 	rf.persist()
 }

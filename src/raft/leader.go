@@ -131,7 +131,7 @@ func (rf *Raft) sendSnapshot(server int, roundId string) int {
 		LastIncludedTerm:  rf.vlog.LastIncludedTerm,
 		Data:              rf.snapshot,
 	}
-	prefix := fmt.Sprintf("SSNAP%s %d of [%d,%d] to %d, args [%d, %d]",
+	prefix := fmt.Sprintf("SSNAP%s %d of [%d,%d] to %d, args [%d,%d]",
 		roundId, rf.me, rf.currentTerm, rf.role, server, args.LastIncludedTerm, args.LastIncludedIndex)
 	rf.mu.Unlock()
 
@@ -240,12 +240,13 @@ func (rf *Raft) tryUpdateCommitIndex(round int) int {
 	if rf.role != RoleLeader {
 		return -1
 	}
-	prefix := fmt.Sprintf("UPCOM%016d %d of [%d,%d], diff: [%d vs %d], match index: %v",
+	prefix := fmt.Sprintf("UPCOM%016d %d of [%d,%d] diff: [%d vs %d], match index: %v",
 		round, rf.me, rf.currentTerm, rf.role, rf.commitIndex, rf.vlog.NextIndex()-1, rf.matchIndex)
 	DPrintf("%s start", prefix)
 
 	for idx := rf.vlog.NextIndex() - 1; idx > rf.commitIndex; idx -= 1 {
 		term := rf.vlog.GetItem(idx).Term
+		// term := rf.vlog.GetTermAtIndex(idx)
 		if term < rf.currentTerm {
 			break
 		}
