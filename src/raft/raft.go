@@ -56,9 +56,9 @@ type ApplyMsg struct {
 type RoleType uint64
 
 const (
-	RoleFollower RoleType = iota
-	RoleCandidate
-	RoleLeader
+	RoleFollower  RoleType = 1
+	RoleCandidate          = 2
+	RoleLeader             = 3
 
 	SendHeartBeatInterval = 150
 	ElectionTimeout       = 400

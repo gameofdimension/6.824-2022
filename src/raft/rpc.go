@@ -28,37 +28,41 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("RequestVote role: %d, term: %d, id: %d, caller term: %d, caller id:%d",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.CandidateId)
+	selfLogIndex, selfLogTerm := rf.vlog.GetLastIndexTerm()
+	prefix := fmt.Sprintf("%s %d of [%d, %d, %d] RequestVote %d of [%d, %d, %d], role: %d, votedFor: %d",
+		RandStr(16), args.CandidateId, args.Term, args.LastLogTerm, args.LastLogIndex,
+		rf.me, rf.currentTerm, selfLogTerm, selfLogIndex, rf.role, rf.votedFor)
+	DPrintf("%s start", prefix)
 
 	term := args.Term
 	if term > rf.currentTerm {
 		rf.becomeFollower(term)
 	}
 
-	if rf.role == RoleFollower {
-		if term < rf.currentTerm {
-			reply.VoteGranted = false
-			reply.Term = rf.currentTerm
-			return
-		}
-		candidateId := args.CandidateId
-		candidateLogTerm := args.LastLogTerm
-		candidateLogIndex := args.LastLogIndex
-		selfLogIndex, selfLogTerm := rf.vlog.GetLastIndexTerm()
-		if canVote(rf.votedFor, candidateId, candidateLogTerm, candidateLogIndex, selfLogTerm, selfLogIndex) {
-			DPrintf("follower %d grant vote to %d, args: %d, %d, %d, %d, %d",
-				rf.me, candidateId, rf.votedFor, candidateLogTerm,
-				candidateLogIndex, selfLogTerm, selfLogTerm)
-			rf.votedFor = candidateId
-			reply.VoteGranted = true
-			reply.Term = rf.currentTerm
-			return
-		}
-		DPrintf("follower %d deny vote to %d, args: %d, %d, %d, %d, %d",
-			rf.me, candidateId, rf.votedFor, candidateLogTerm,
-			candidateLogIndex, selfLogTerm, selfLogTerm)
+	if rf.role != RoleFollower {
+		DPrintf("%s not follower", prefix)
+		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+		return
 	}
+
+	if term < rf.currentTerm {
+		DPrintf("%s old term", prefix)
+		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+		return
+	}
+	candidateId := args.CandidateId
+	candidateLogTerm := args.LastLogTerm
+	candidateLogIndex := args.LastLogIndex
+	if canVote(rf.votedFor, candidateId, candidateLogTerm, candidateLogIndex, selfLogTerm, selfLogIndex) {
+		DPrintf("%s grant vote", prefix)
+		rf.votedFor = candidateId
+		reply.VoteGranted = true
+		reply.Term = rf.currentTerm
+		return
+	}
+	DPrintf("%s refuse vote", prefix)
 	reply.VoteGranted = false
 	reply.Term = rf.currentTerm
 }
@@ -158,8 +162,8 @@ func (rf *Raft) firstTangibleIndex() (int, int) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	prefix := fmt.Sprintf("AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
+	prefix := fmt.Sprintf("%s AppendEntries role: %d, term: %d, id: %d, caller term: %d, caller id:%d, len: %d",
+		RandStr(16), rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, len(args.Entries))
 	DPrintf("%s begin", prefix)
 
 	term := args.Term
@@ -232,7 +236,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	leaderCommit := args.LeaderCommit
 	if leaderCommit > rf.commitIndex {
 		newVal := min(leaderCommit, args.PrevLogIndex+len(args.Entries))
-		DPrintf("follower %d update commit index %d->%d", rf.me, rf.commitIndex, newVal)
+		DPrintf("%s follower %d update commit index %d->%d", prefix, rf.me, rf.commitIndex, newVal)
 		rf.commitIndex = newVal
 	}
 	reply.Success = true
@@ -279,8 +283,8 @@ func (rf *Raft) channelApplySnapshot(msg *ApplyMsg) {
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	prefix := fmt.Sprintf("InstallSnapshot role: %d, term: %d, id: %d, caller term: %d, caller id:%d, LastIncludedIndex: %d, LastIncludedTerm: %d",
-		rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
+	prefix := fmt.Sprintf("%s InstallSnapshot role: %d, term: %d, id: %d, caller term: %d, caller id:%d, LastIncludedIndex: %d, LastIncludedTerm: %d",
+		RandStr(16), rf.role, rf.currentTerm, rf.me, args.Term, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
 	DPrintf("%s", prefix)
 
 	term := args.Term
@@ -329,8 +333,21 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
-	start := time.Now().UnixMilli()
-	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
-	DPrintf("Raft.InstallSnapshot, time: %d", time.Now().UnixMilli()-start)
-	return ok
+	done := make(chan bool)
+	rf.mu.Lock()
+	self := rf.me
+	rf.mu.Unlock()
+	go func() {
+		start := time.Now().UnixMilli()
+		ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
+		DPrintf("Raft.InstallSnapshot %d->%d, time: %d", self, server, time.Now().UnixMilli()-start)
+		done <- ok
+	}()
+	select {
+	case ret := <-done:
+		return ret
+	case <-time.After(500 * time.Millisecond):
+		DPrintf("Raft.InstallSnapshot %d->%d, timeout", self, server)
+		return false
+	}
 }

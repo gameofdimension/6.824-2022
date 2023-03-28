@@ -1,6 +1,9 @@
 package raft
 
-import "log"
+import (
+	"log"
+	"math/rand"
+)
 
 // Debugging
 const Debug = false
@@ -17,4 +20,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func RandStr(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Int63()%int64(len(letterBytes))]
+	}
+	return string(b)
 }

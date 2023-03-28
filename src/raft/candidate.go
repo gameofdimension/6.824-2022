@@ -21,7 +21,6 @@ func (rf *Raft) checkProgress(count int) (bool, int) {
 func (rf *Raft) newSession() int {
 	rf.mu.Lock()
 	rf.currentTerm += 1
-	rf.votedFor = rf.me
 	rf.persist()
 	rf.leaderId = -1
 
@@ -114,6 +113,7 @@ func (rf *Raft) becomeCandidate() {
 	defer rf.mu.Unlock()
 	DPrintf("%d becomeCandidate at term %d", rf.me, rf.currentTerm)
 	rf.role = RoleCandidate
+	rf.votedFor = -1
 }
 
 func (rf *Raft) startElection() {
@@ -147,9 +147,10 @@ func (rf *Raft) becomeLeader() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.role != RoleCandidate {
-		DPrintf("%d fail become leader of term %d", rf.me, rf.currentTerm)
+		DPrintf("%d fail become leader of term %d due to not candidate now", rf.me, rf.currentTerm)
 		return
 	}
+	rf.votedFor = -1
 	rf.role = RoleLeader
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = rf.vlog.NextIndex()
