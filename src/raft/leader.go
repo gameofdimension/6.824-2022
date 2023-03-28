@@ -34,7 +34,7 @@ func (rf *Raft) sendHeartBeat(roundId string) bool {
 		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
 			self := rf.me
-			prefix := fmt.Sprintf("%s heartbeat from %d of [%d, %d] to", roundId, self, rf.currentTerm, rf.role)
+			prefix := fmt.Sprintf("BEAT%s from %d of [%d, %d] to", roundId, self, rf.currentTerm, rf.role)
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return

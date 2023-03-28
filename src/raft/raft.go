@@ -211,10 +211,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, isLeader
 	}
 
-	DPrintf("%d add command %v at term %d", rf.me, command, term)
+	DPrintf("%d add command %v at term %d onto index %d", rf.me, command, term, index)
 	tmp := LogEntry{Term: term, Command: command}
 	rf.vlog.AddItem(&tmp)
-	DPrintf("leader %d next index to add: %d", rf.me, rf.vlog.NextIndex())
 	rf.persist()
 
 	// Your code here (2B).
