@@ -29,7 +29,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	selfLogIndex, selfLogTerm := rf.vlog.GetLastIndexTerm()
-	prefix := fmt.Sprintf("%s InstallSnapshot %d of [%d,%d], %d, %d called by %d of [%d], %d, %d, votedFor: %d",
+	prefix := fmt.Sprintf("%s RequestVote %d of [%d,%d], %d, %d called by %d of [%d], %d, %d, votedFor: %d",
 		RandStr(16), rf.me, rf.currentTerm, rf.role, selfLogTerm, selfLogIndex, args.CandidateId,
 		args.Term, args.LastLogTerm, args.LastLogIndex, rf.votedFor)
 	DPrintf("%s start", prefix)
@@ -136,7 +136,7 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.role = RoleFollower
-	rf.lastFromLeaderAt = time.Now().UnixMilli()
+	// rf.lastFromLeaderAt = time.Now().UnixMilli() - int64(rand.Intn(ElectionTimeout))
 	rf.persist()
 }
 
@@ -305,6 +305,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		DPrintf("%s, fail for term %d vs %d", prefix, term, rf.currentTerm)
 		return
 	}
+
+	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	if args.LastIncludedIndex <= rf.vlog.GetLastIncludedIndex() {
 		DPrintf("%s, no need to apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.vlog.GetLastIncludedIndex())
 		return

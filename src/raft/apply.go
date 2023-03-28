@@ -29,7 +29,7 @@ func (rf *Raft) nextToApply(round int) (bool, int, *ApplyMsg) {
 		panic(fmt.Sprintf("%s lastApplied bigger than commitIndex", prefix))
 	}
 	if rf.lastApplied == rf.commitIndex {
-		DPrintf("%s no log to apply", prefix)
+		// DPrintf("%s no log to apply", prefix)
 		return false, rf.lastApplied, nil
 	}
 	nextApplyIndex := rf.lastApplied + 1
