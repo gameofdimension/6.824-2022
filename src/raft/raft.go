@@ -242,6 +242,27 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) shouldStartElection() bool {
+	rf.mu.Lock()
+	lastFromLeaderAt := rf.lastFromLeaderAt
+	lastGrantVote := rf.lastGrantVote
+	electionStartAt := rf.electionStartAt
+	span := ElectionTimeout
+	nowMills := time.Now().UnixMilli()
+	must := false
+	if rf.role == RoleFollower {
+		if nowMills-lastFromLeaderAt > int64(span) && nowMills-lastGrantVote > int64(span) {
+			must = true
+		}
+	} else if rf.role == RoleCandidate {
+		if nowMills-electionStartAt > int64(span) {
+			must = true
+		}
+	}
+	rf.mu.Unlock()
+	return must
+}
+
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
@@ -251,23 +272,11 @@ func (rf *Raft) ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-
-		rf.mu.Lock()
-		role := rf.role
-		lastFromLeaderAt := rf.lastFromLeaderAt
-		lastGrantVote := rf.lastGrantVote
-		rf.mu.Unlock()
-
-		if role == RoleFollower {
-			if rf.leaderHang(lastFromLeaderAt, lastGrantVote) {
-				round += 1
-				rf.startElection(round)
-			} else {
-				span := rand.Intn(Delta) + ElectionTimeout
-				time.Sleep(time.Duration(span) * time.Millisecond)
-			}
+		if rf.shouldStartElection() {
+			round += 1
+			rf.startElection(round)
 		} else {
-			time.Sleep(time.Duration(SendHeartBeatInterval) * time.Millisecond)
+			time.Sleep(time.Duration(rand.Int63()%Delta) * time.Millisecond)
 		}
 	}
 }

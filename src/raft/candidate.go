@@ -2,42 +2,11 @@ package raft
 
 import (
 	"fmt"
-	"math/rand"
 	"time"
 )
 
-func (rf *Raft) checkProgress(count int) (bool, int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if rf.role != RoleCandidate {
-		return false, -1
-	}
-	pn := len(rf.peers)
-	if count >= pn {
-		return false, -2
-	}
-	return true, pn
-}
-
-func (rf *Raft) newSession(round int, session int) int {
-	rf.mu.Lock()
-	rf.currentTerm += 1
-	rf.persist()
-	rf.leaderId = -1
-
-	currentTerm := rf.currentTerm
-	candidateId := rf.me
-	lastLogIndex, lastLogTerm := rf.vlog.GetLastIndexTerm()
-	args := RequestVoteArgs{
-		Term:         currentTerm,
-		CandidateId:  candidateId,
-		LastLogIndex: lastLogIndex,
-		LastLogTerm:  lastLogTerm,
-	}
-	prefix := fmt.Sprintf("SESSN%08d:%07d %d of [%d,%d], args: [%d,%d]",
-		round, session, rf.me, rf.currentTerm, rf.role, lastLogTerm, lastLogIndex)
-	rf.mu.Unlock()
-
+func (rf *Raft) newSession(round int, args *RequestVoteArgs) int {
+	currentTerm := args.Term
 	result := make(chan int)
 	for ix := range rf.peers {
 		if ix == rf.me {
@@ -45,16 +14,24 @@ func (rf *Raft) newSession(round int, session int) int {
 		}
 		go func(server int, ch chan<- int) {
 			rf.mu.Lock()
-			DPrintf("%s call vote %d start", prefix, server)
+			prefix := fmt.Sprintf("ELECT%016d %d of [%d,%d]", round, rf.me, rf.currentTerm, rf.role)
 			if rf.role != RoleCandidate {
 				DPrintf("%s call vote %d return, not candidate", prefix, server)
 				rf.mu.Unlock()
 				ch <- -1
 				return
 			}
+			if rf.currentTerm != currentTerm {
+				DPrintf("%s call vote %d return, term changed [%d vs %d]", prefix, server, rf.currentTerm, currentTerm)
+				rf.mu.Unlock()
+				ch <- -1
+				return
+			}
+			DPrintf("%s call vote %d start", prefix, server)
 			rf.mu.Unlock()
+
 			reply := RequestVoteReply{}
-			rc := rf.sendRequestVote(server, &args, &reply)
+			rc := rf.sendRequestVote(server, args, &reply)
 			if !rc {
 				DPrintf("%s call vote %d rpc fail", prefix, server)
 				ch <- 2
@@ -82,13 +59,21 @@ func (rf *Raft) newSession(round int, session int) int {
 		}(ix, result)
 	}
 
+	rf.mu.Lock()
+	prefix := fmt.Sprintf("ELECT%016d %d of [%d,%d]", round, rf.me, rf.currentTerm, rf.role)
+	rf.mu.Unlock()
+
 	votes := 1
 	count := 1
 	for rf.killed() == false {
-		ret, pn := rf.checkProgress(count)
-		if !ret {
+		pn := len(rf.peers)
+		if count >= pn {
 			DPrintf("%s election fail", prefix)
 			break
+		}
+		if votes*2 > pn {
+			DPrintf("%s election successful", prefix)
+			return 0
 		}
 
 		select {
@@ -101,10 +86,6 @@ func (rf *Raft) newSession(round int, session int) int {
 			}
 			if ret == 0 {
 				votes += 1
-				if votes*2 > pn {
-					DPrintf("%s election successful", prefix)
-					return 0
-				}
 			}
 		case <-time.After(ElectionTimeout * time.Millisecond):
 			DPrintf("%s election timeout", prefix)
@@ -117,45 +98,46 @@ func (rf *Raft) newSession(round int, session int) int {
 func (rf *Raft) becomeCandidate() {
 	rf.role = RoleCandidate
 	rf.votedFor = -1
+	rf.electionStartAt = time.Now().UnixMilli()
+	rf.currentTerm += 1
 	rf.persist()
 }
 
 func (rf *Raft) startElection(round int) {
 	rf.mu.Lock()
+	role := rf.role
+	prefix := fmt.Sprintf("ELECT%016d %d of [%d, %d]", round, rf.me, rf.currentTerm, role)
+	if role != RoleFollower {
+		// 这个检查可能并不需要，因为没有什么原因让它突然变成非 follower
+		DPrintf("%s not follower now", prefix)
+		rf.mu.Unlock()
+		return
+	}
 	rf.becomeCandidate()
+	rf.leaderId = -1
+
+	currentTerm := rf.currentTerm
+	candidateId := rf.me
+	lastLogIndex, lastLogTerm := rf.vlog.GetLastIndexTerm()
+	args := RequestVoteArgs{
+		Term:         currentTerm,
+		CandidateId:  candidateId,
+		LastLogIndex: lastLogIndex,
+		LastLogTerm:  lastLogTerm,
+	}
 	rf.mu.Unlock()
 
-	session := 0
-	for rf.killed() == false {
-		session += 1
-		rf.mu.Lock()
-		role := rf.role
-		prefix := fmt.Sprintf("ELECT%016d %d of [%d, %d]", round, rf.me, rf.currentTerm, role)
+	startedAt := time.Now().UnixMilli()
+	ret := rf.newSession(round, &args)
+	prefix = fmt.Sprintf("ELECT%016d %d of [%d,%d]", round, rf.me, rf.currentTerm, role)
+	DPrintf("%s return: %d, cost time: %d", prefix, ret, time.Now().UnixMilli()-startedAt)
+	rf.mu.Lock()
+	if ret == 0 && rf.role == RoleCandidate {
+		rf.becomeLeader()
 		rf.mu.Unlock()
-
-		if role != RoleCandidate {
-			DPrintf("%s not candidate", prefix)
-			break
-		}
-
-		rf.electionStartAt = time.Now().UnixMilli()
-		DPrintf("%s session %d start", prefix, session)
-		ret := rf.newSession(round, session)
-
-		// term updated
-		prefix = fmt.Sprintf("ELECT%016d %d of [%d,%d]", round, rf.me, rf.currentTerm, role)
-		DPrintf("%s session %d return: %d, cost time: %d", prefix, session, ret, time.Now().UnixMilli()-rf.electionStartAt)
-		rf.mu.Lock()
-		if ret == 0 && rf.role == RoleCandidate {
-			rf.becomeLeader()
-			rf.mu.Unlock()
-			DPrintf("%s session %d becomeLeader of term %d", prefix, session, rf.currentTerm)
-			break
-		}
-		rf.mu.Unlock()
-		span := rand.Intn(Delta) + ElectionTimeout
-		time.Sleep(time.Duration(span) * time.Millisecond)
+		DPrintf("%s becomeLeader of term %d", prefix, rf.currentTerm)
 	}
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) becomeLeader() {
