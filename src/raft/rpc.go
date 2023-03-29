@@ -180,18 +180,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// candidate 1 和 candidate 2 都进入了同一个 term T 进行拉票，1 的动作更快一点成了 leader，
 		// 然后给发送心跳，在 ">=" 的逻辑下，其 currentTerm 不变还是 T ，但是 votedFor 会被重置。
 		// 这时 2 就又有机会成为 term T 的 leader ，而这是不允许的，相反 ">" 可以防止这样的情况
-		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
+		DPrintf("%s %d of [%d,%d] becomeFollower by higher term", prefix, rf.me, rf.currentTerm, rf.role)
+		rf.becomeFollower(term)
+	}
+	// if not follower, then only can be candidate
+	if rf.role != RoleFollower {
+		DPrintf("%s %d of [%d,%d] becomeFollower from candidate", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 	}
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.leaderId = args.LeaderId
-	if rf.role != RoleFollower {
-		DPrintf("%s fail not follower", prefix)
-		reply.Success = false
-		reply.Term = rf.currentTerm
-		reply.XTerm = -1
-		return
-	}
 
 	leaderPrevLogIndex := args.PrevLogIndex
 	leaderPrevLogTerm := args.PrevLogTerm
@@ -295,16 +293,15 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 	if term > rf.currentTerm {
-		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
+		DPrintf("%s %d of [%d, %d] becomeFollower by higher term", prefix, rf.me, rf.currentTerm, rf.role)
+		rf.becomeFollower(term)
+	}
+	if rf.role != RoleFollower {
+		DPrintf("%s %d of [%d, %d] becomeFollower from candidate", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 	}
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.leaderId = args.LeaderId
-
-	if rf.role != RoleFollower {
-		DPrintf("%s, fail not follower", prefix)
-		return
-	}
 
 	if args.LastIncludedIndex <= rf.vlog.GetLastIncludedIndex() {
 		DPrintf("%s, no need to apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.vlog.GetLastIncludedIndex())
