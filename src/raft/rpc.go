@@ -35,11 +35,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	DPrintf("%s start", prefix)
 
 	term := args.Term
+	if term < rf.currentTerm {
+		DPrintf("%s old term", prefix)
+		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+		return
+	}
 	if term > rf.currentTerm {
 		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 	}
-
 	if rf.role != RoleFollower {
 		DPrintf("%s not follower", prefix)
 		reply.VoteGranted = false
@@ -47,12 +52,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	if term < rf.currentTerm {
-		DPrintf("%s old term", prefix)
-		reply.VoteGranted = false
-		reply.Term = rf.currentTerm
-		return
-	}
 	candidateId := args.CandidateId
 	candidateLogTerm := args.LastLogTerm
 	candidateLogIndex := args.LastLogIndex
@@ -170,6 +169,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	DPrintf("%s begin", prefix)
 
 	term := args.Term
+	if term < rf.currentTerm {
+		DPrintf("%s fail for term %d vs %d", prefix, term, rf.currentTerm)
+		reply.Success = false
+		reply.Term = rf.currentTerm
+		reply.XTerm = -1
+		return
+	}
 	if term > rf.currentTerm {
 		// 上面这个条件判断还是应该忠于论文用 ">"，而不是 ">="，否则会造成 bug。想象以下场景：
 		// candidate 1 和 candidate 2 都进入了同一个 term T 进行拉票，1 的动作更快一点成了 leader，
@@ -179,6 +185,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.becomeFollower(term)
 		rf.leaderId = args.LeaderId
 	}
+	rf.lastFromLeaderAt = time.Now().UnixMilli()
+	rf.leaderId = args.LeaderId
 	if rf.role != RoleFollower {
 		DPrintf("%s fail not follower", prefix)
 		reply.Success = false
@@ -186,16 +194,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.XTerm = -1
 		return
 	}
-	if term < rf.currentTerm {
-		DPrintf("%s fail for term %d vs %d", prefix, term, rf.currentTerm)
-		reply.Success = false
-		reply.Term = rf.currentTerm
-		reply.XTerm = -1
-		return
-	}
-
-	rf.lastFromLeaderAt = time.Now().UnixMilli()
-	rf.leaderId = args.LeaderId
 
 	leaderPrevLogIndex := args.PrevLogIndex
 	leaderPrevLogTerm := args.PrevLogTerm
@@ -293,24 +291,24 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	DPrintf("%s", prefix)
 
 	term := args.Term
+	reply.Term = rf.currentTerm
+	if term < rf.currentTerm {
+		DPrintf("%s, fail for term %d vs %d", prefix, term, rf.currentTerm)
+		return
+	}
 	if term > rf.currentTerm {
 		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
 		rf.leaderId = args.LeaderId
 	}
-	reply.Term = rf.currentTerm
+	rf.lastFromLeaderAt = time.Now().UnixMilli()
+	rf.leaderId = args.LeaderId
+
 	if rf.role != RoleFollower {
 		DPrintf("%s, fail not follower", prefix)
 		return
 	}
-	if term < rf.currentTerm {
-		DPrintf("%s, fail for term %d vs %d", prefix, term, rf.currentTerm)
-		return
-	}
 
-	rf.lastFromLeaderAt = time.Now().UnixMilli()
-	rf.leaderId = args.LeaderId
-	
 	if args.LastIncludedIndex <= rf.vlog.GetLastIncludedIndex() {
 		DPrintf("%s, no need to apply snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.vlog.GetLastIncludedIndex())
 		return
