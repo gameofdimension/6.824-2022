@@ -37,15 +37,22 @@ func (rf *Raft) newSession(round int, args *RequestVoteArgs) int {
 				ch <- 2
 				return
 			}
-			if reply.Term > currentTerm {
-				DPrintf("%s call vote %d becomeFollower [%d vs %d]", prefix, server, reply.Term, currentTerm)
-				rf.mu.Lock()
+			rf.mu.Lock()
+			if reply.Term > rf.currentTerm {
+				DPrintf("%s call vote %d becomeFollower by higher term:[%d vs %d]", prefix, server, reply.Term, rf.currentTerm)
 				rf.becomeFollower(reply.Term)
 				rf.leaderId = -1
 				rf.mu.Unlock()
 				ch <- -1
 				return
 			}
+			if reply.Term < rf.currentTerm {
+				DPrintf("%s call vote %d ignore outdated reply of term:[%d vs %d]", prefix, server, reply.Term, rf.currentTerm)
+				rf.mu.Unlock()
+				ch <- 3
+				return
+			}
+			rf.mu.Unlock()
 			if reply.VoteGranted {
 				if reply.Term > currentTerm {
 					panic("follower term is bigger than candidate, meanwhile vote granted")

@@ -40,21 +40,7 @@ func (rf *Raft) sendHeartBeat(roundId string) bool {
 				return
 			}
 			rf.mu.Unlock()
-
-			reply := AppendEntriesReply{}
-			DPrintf("%s %d begin", prefix, server)
-			rc := rf.sendAppendEntries(server, args, &reply)
-			if rc {
-				DPrintf("%s %d success:%t, %v, %v", prefix, server, reply.Success, *args, reply)
-			} else {
-				DPrintf("%s %d rpc fail", prefix, server)
-			}
-			rf.mu.Lock()
-			if rc && reply.Term > rf.currentTerm {
-				DPrintf("%s %d becomeFollower %d, %d vs %d", prefix, server, self, reply.Term, rf.currentTerm)
-				rf.becomeFollower(reply.Term)
-			}
-			rf.mu.Unlock()
+			rf.sendEntries(args, prefix, server)
 		}(idx, &req)
 	}
 	return true
@@ -145,9 +131,13 @@ func (rf *Raft) sendSnapshot(server int, roundId string) int {
 		return 1
 	}
 	if reply.Term > rf.currentTerm {
-		DPrintf("%s becomeFollower, reply term:%d", prefix, reply.Term)
+		DPrintf("%s becomeFollower by reply term:[%d vs %d]", prefix, reply.Term, rf.currentTerm)
 		rf.becomeFollower(reply.Term)
 		return 2
+	}
+	if reply.Term < rf.currentTerm {
+		DPrintf("%s outdated reply of term:[%d vs %d]", prefix, reply.Term, rf.currentTerm)
+		return 4
 	}
 	DPrintf("%s, assume successful", prefix)
 	if args.LastIncludedIndex > rf.matchIndex[server] {
@@ -157,31 +147,30 @@ func (rf *Raft) sendSnapshot(server int, roundId string) int {
 	return 0
 }
 
-func (rf *Raft) syncLog(server int, roundId string) int {
-	ret, args, prefix := rf.prepareArgs(server, roundId)
-	if !ret {
-		return -1
-	}
-
+func (rf *Raft) sendEntries(args *AppendEntriesArgs, prefix string, server int) int {
 	prefix = fmt.Sprintf("%s args [%d,%d]", prefix, args.PrevLogTerm, args.PrevLogIndex)
 	reply := AppendEntriesReply{}
-	DPrintf("%s sendAppendEntries begin", prefix)
+	DPrintf("%s begin", prefix)
 	rc := rf.sendAppendEntries(server, args, &reply)
-	DPrintf("%s sendAppendEntries rpc return %t", prefix, rc)
+	DPrintf("%s rpc return %t", prefix, rc)
 	if !rc {
-		DPrintf("%s sendAppendEntries rpc fail", prefix)
+		DPrintf("%s rpc fail", prefix)
 		return 1
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		DPrintf("%s sendAppendEntries becomeFollower, reply term:%d", prefix, reply.Term)
+		DPrintf("%s becomeFollower by reply term:[%d vs %d]", prefix, reply.Term, rf.currentTerm)
 		rf.becomeFollower(reply.Term)
 		return 2
 	}
+	if reply.Term < rf.currentTerm {
+		DPrintf("%s ignore outdated reply of term:[%d vs %d]", prefix, reply.Term, rf.currentTerm)
+		return 4
+	}
 	if !reply.Success {
-		DPrintf("%s sendAppendEntries not success %v", prefix, reply)
+		DPrintf("%s not success %v", prefix, reply)
 		if reply.XTerm < 0 {
 			return -3
 		}
@@ -191,8 +180,7 @@ func (rf *Raft) syncLog(server int, roundId string) int {
 			panic(fmt.Sprintf("nextIndex error %d, %d vs %d, %d\n", server, next, rf.nextIndex[server], rf.vlog.NextIndex()))
 		}
 		if rf.nextIndex[server] < rf.vlog.GetLastIncludedIndex()+1 {
-			DPrintf("%s sendAppendEntries will send snapshot %d vs %d",
-				prefix, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
+			DPrintf("%s will send snapshot %d vs %d", prefix, rf.nextIndex[server], rf.vlog.GetLastIncludedIndex())
 		}
 		return 3
 	}
@@ -202,11 +190,19 @@ func (rf *Raft) syncLog(server int, roundId string) int {
 		panic(fmt.Sprintf("nextIndex fail %d, %d, %d\n", server, rf.nextIndex[server], rf.vlog.NextIndex()))
 	}
 	if len(args.Entries) <= 0 {
-		DPrintf("%s sendAppendEntries empty entry", prefix)
+		DPrintf("%s empty entry", prefix)
 		return -2
 	}
-	DPrintf("%s sendAppendEntries success", prefix)
+	DPrintf("%s success", prefix)
 	return 0
+}
+
+func (rf *Raft) syncLog(server int, roundId string) int {
+	ret, args, prefix := rf.prepareArgs(server, roundId)
+	if !ret {
+		return -1
+	}
+	return rf.sendEntries(args, prefix, server)
 }
 
 func (rf *Raft) lastIndexOfTerm(term int, preLogIndex int) int {
