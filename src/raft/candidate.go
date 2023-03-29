@@ -107,12 +107,6 @@ func (rf *Raft) startElection(round int) {
 	rf.mu.Lock()
 	role := rf.role
 	prefix := fmt.Sprintf("ELECT%016d %d of [%d, %d]", round, rf.me, rf.currentTerm, role)
-	if role != RoleFollower {
-		// 这个检查可能并不需要，因为没有什么原因让它突然变成非 follower
-		DPrintf("%s not follower now", prefix)
-		rf.mu.Unlock()
-		return
-	}
 	rf.becomeCandidate()
 	rf.leaderId = -1
 
@@ -134,7 +128,6 @@ func (rf *Raft) startElection(round int) {
 	rf.mu.Lock()
 	if ret == 0 && rf.role == RoleCandidate {
 		rf.becomeLeader()
-		rf.mu.Unlock()
 		DPrintf("%s becomeLeader of term %d", prefix, rf.currentTerm)
 	}
 	rf.mu.Unlock()
