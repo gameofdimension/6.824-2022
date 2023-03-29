@@ -136,7 +136,6 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
 	rf.votedFor = -1
 	rf.role = RoleFollower
-	// rf.lastFromLeaderAt = time.Now().UnixMilli() - int64(rand.Intn(ElectionTimeout))
 	rf.persist()
 }
 
@@ -183,7 +182,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 这时 2 就又有机会成为 term T 的 leader ，而这是不允许的，相反 ">" 可以防止这样的情况
 		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
-		rf.leaderId = args.LeaderId
 	}
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.leaderId = args.LeaderId
@@ -299,7 +297,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if term > rf.currentTerm {
 		DPrintf("%s %d of [%d, %d] becomeFollower", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
-		rf.leaderId = args.LeaderId
 	}
 	rf.lastFromLeaderAt = time.Now().UnixMilli()
 	rf.leaderId = args.LeaderId
