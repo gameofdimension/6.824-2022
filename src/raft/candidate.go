@@ -136,6 +136,7 @@ func (rf *Raft) startElection(round int) {
 func (rf *Raft) becomeLeader() {
 	rf.votedFor = -1
 	rf.role = RoleLeader
+	rf.leaderId = rf.me
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = rf.vlog.NextIndex()
 		rf.matchIndex[i] = 0
@@ -144,5 +145,11 @@ func (rf *Raft) becomeLeader() {
 	// insert a noop
 	// tmp := LogEntry{Term: rf.currentTerm, Command: nil}
 	// rf.vlog.AddItem(&tmp)
+	// 上面的代码是为了尝试解决有些 test case 跑得很慢的问题。观察一下，发现原因在于一个 leader 在 term1 接受了
+	// command1，但是奔溃了，然后再 term2 重新选为 leader，如果这时调用方没有发送新的 command 过来， 原来老的
+	// 这个 command1 用于无法被认为 commit，从而也就不会 apply，从而就需要一直等直到当前循环超时。
+	// raft 只能 commit 当前 term 的 command 的要求是其正确性的一个前提条件（参考 figure 8）因而是不能改的。
+	// 这里的改动是参考第 8 节中 no-op 的做法，这样可以加速 commit ，但是会破坏另一些 case ，因此这里应该是预期
+	// 不使用这个方法的
 	rf.persist()
 }
