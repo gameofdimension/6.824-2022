@@ -34,7 +34,7 @@ func (rf *Raft) sendHeartBeat(roundId string) bool {
 		go func(server int, args *AppendEntriesArgs) {
 			rf.mu.Lock()
 			self := rf.me
-			prefix := fmt.Sprintf("HBEAT%s from %d of [%d,%d] to", roundId, self, rf.currentTerm, rf.role)
+			prefix := fmt.Sprintf("HBEAT%s from %d of [%d,%d] to %d", roundId, self, rf.currentTerm, rf.role, server)
 			if rf.role != RoleLeader {
 				rf.mu.Unlock()
 				return
@@ -278,7 +278,7 @@ func (rf *Raft) replicateWorker(server int) {
 			sendSnapshot = true
 		}
 		if rf.role == RoleLeader {
-			DPrintf("REPLI%s %d of [%d,%d] to %d, [%d vs %d], will send snapshot:%t",
+			DPrintf("REPLI%s %d of [%d,%d] to %d, [%d vs %d], will send snapshot?%t",
 				roundId, rf.me, rf.currentTerm, rf.role, server, rf.nextIndex[server],
 				rf.vlog.GetLastIncludedIndex(), sendSnapshot)
 		}

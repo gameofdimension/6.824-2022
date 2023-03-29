@@ -184,6 +184,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.becomeFollower(term)
 	}
 	// if not follower, then only can be candidate
+	// raft paper says: if AppendEntries is received from new leader: convert to follower
 	if rf.role != RoleFollower {
 		DPrintf("%s %d of [%d,%d] becomeFollower from candidate", prefix, rf.me, rf.currentTerm, rf.role)
 		rf.becomeFollower(term)
