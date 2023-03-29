@@ -246,7 +246,6 @@ func (rf *Raft) tryUpdateCommitIndex(round int) int {
 
 	for idx := rf.vlog.NextIndex() - 1; idx > rf.commitIndex; idx -= 1 {
 		term := rf.vlog.GetItem(idx).Term
-		// term := rf.vlog.GetTermAtIndex(idx)
 		if term < rf.currentTerm {
 			break
 		}

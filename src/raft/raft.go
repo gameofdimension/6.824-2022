@@ -321,6 +321,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 			Data:              make([]LogEntry, 0),
 		}
 	}
+	rf.commitIndex = rf.vlog.GetLastIncludedIndex()
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	for idx := range rf.nextIndex {

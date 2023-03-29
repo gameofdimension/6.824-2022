@@ -123,9 +123,9 @@ func (rf *Raft) startElection(round int) {
 
 	startedAt := time.Now().UnixMilli()
 	ret := rf.newSession(round, &args)
+	rf.mu.Lock()
 	prefix = fmt.Sprintf("ELECT%016d %d of [%d,%d]", round, rf.me, rf.currentTerm, role)
 	DPrintf("%s return: %d, cost time: %d", prefix, ret, time.Now().UnixMilli()-startedAt)
-	rf.mu.Lock()
 	if ret == 0 && rf.role == RoleCandidate {
 		rf.becomeLeader()
 		DPrintf("%s becomeLeader of term %d", prefix, rf.currentTerm)
