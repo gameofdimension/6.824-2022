@@ -16,7 +16,7 @@ func (rf *Raft) applyLog() {
 		if rc {
 			rf.applyCh <- *msg
 		} else {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(1 * time.Millisecond)
 		}
 	}
 }

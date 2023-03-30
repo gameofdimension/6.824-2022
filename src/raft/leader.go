@@ -284,17 +284,12 @@ func (rf *Raft) replicateWorker(server int) {
 		}
 		rf.mu.Unlock()
 
-		var rc int
 		if sendSnapshot {
-			rc = rf.sendSnapshot(server, roundId)
+			rf.sendSnapshot(server, roundId)
 		} else {
-			rc = rf.syncLog(server, roundId)
+			rf.syncLog(server, roundId)
 		}
-		if rc < 0 {
-			time.Sleep(83 * time.Millisecond)
-		} else {
-			time.Sleep(17 * time.Millisecond)
-		}
+		time.Sleep(1 * time.Millisecond)
 	}
 }
 
@@ -303,7 +298,7 @@ func (rf *Raft) commitIndexWorker() {
 	for rf.killed() == false {
 		round += 1
 		rf.tryUpdateCommitIndex(round)
-		time.Sleep(47 * time.Millisecond)
+		time.Sleep(1 * time.Millisecond)
 	}
 }
 
