@@ -1,12 +1,15 @@
 package kvraft
 
 import (
-	"6.824/labgob"
-	"6.824/labrpc"
-	"6.824/raft"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
 )
 
 const Debug = false
@@ -18,11 +21,22 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+const (
+	OpNoop   = 0
+	OpGet    = 1
+	OpPut    = 2
+	OpAppend = 3
+)
+
+type OpType uint64
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type  OpType
+	Key   string
+	Value string
 }
 
 type KVServer struct {
@@ -35,18 +49,100 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	lastApplied int
+	repo        map[string]string
+	getResult   map[int]interface{}
 }
 
+func (kv *KVServer) applier() {
+	for m := range kv.applyCh {
+		kv.mu.Lock()
+		if m.CommandIndex <= kv.lastApplied {
+			panic(fmt.Sprintf("index error %d vs %d", m.CommandIndex, kv.lastApplied))
+		}
+
+		kv.lastApplied = m.CommandIndex
+		if m.SnapshotValid {
+
+		} else if m.CommandValid {
+			op := m.Command.(Op)
+			if op.Type == OpGet {
+				if val, ok := kv.repo[op.Key]; ok {
+					kv.getResult[kv.lastApplied] = val
+				} else {
+					kv.getResult[kv.lastApplied] = nil
+				}
+			} else if op.Type == OpPut {
+				kv.repo[op.Key] = op.Value
+			} else if op.Type == OpAppend {
+				kv.repo[op.Key] = kv.repo[op.Key] + op.Value
+			}
+		}
+		kv.mu.Unlock()
+	}
+}
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	op := Op{
+		Type: OpGet,
+		Key:  args.Key,
+	}
+
+	index, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	for kv.killed() == false {
+		kv.mu.Lock()
+		if kv.lastApplied < index {
+			kv.mu.Unlock()
+			time.Sleep(11 * time.Millisecond)
+			continue
+		}
+		val := kv.getResult[index]
+		kv.mu.Unlock()
+		if val == nil {
+			reply.Err = ErrNoKey
+			return
+		} else {
+			reply.Err = OK
+			reply.Value = val.(string)
+			return
+		}
+	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	opType := OpPut
+	if args.Op == "Append" {
+		opType = OpAppend
+	}
+	op := Op{
+		Type:  OpType(opType),
+		Key:   args.Key,
+		Value: args.Value,
+	}
+	index, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	for kv.killed() == false {
+		kv.mu.Lock()
+		if kv.lastApplied < index {
+			kv.mu.Unlock()
+			time.Sleep(9 * time.Millisecond)
+			continue
+		}
+		kv.mu.Unlock()
+		reply.Err = OK
+		return
+	}
 }
 
-//
 // the tester calls Kill() when a KVServer instance won't
 // be needed again. for your convenience, we supply
 // code to set rf.dead (without needing a lock),
@@ -55,7 +151,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // code to Kill(). you're not required to do anything
 // about this, but it may be convenient (for example)
 // to suppress debug output from a Kill()ed instance.
-//
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
@@ -67,7 +162,6 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
-//
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
@@ -80,11 +174,11 @@ func (kv *KVServer) killed() bool {
 // you don't need to snapshot.
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
-//
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
+	labgob.Register(Err(""))
 
 	kv := new(KVServer)
 	kv.me = me
@@ -95,6 +189,11 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
+	kv.lastApplied = -1
+	kv.repo = make(map[string]string)
+	kv.getResult = make(map[int]interface{})
+
+	go kv.applier()
 	// You may need initialization code here.
 
 	return kv
