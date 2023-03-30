@@ -15,7 +15,7 @@ import (
 const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
+	if !Debug {
 		log.Printf(format, a...)
 	}
 	return
@@ -34,9 +34,10 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type  OpType
-	Key   string
-	Value string
+	Type   OpType
+	Key    string
+	Value  string
+	Unique string
 }
 
 type KVServer struct {
@@ -51,90 +52,151 @@ type KVServer struct {
 	// Your definitions here.
 	lastApplied int
 	repo        map[string]string
-	getResult   map[int]interface{}
-	// indexTerm   map[int]int
+	cache       map[string]interface{}
+	indexReq    map[int]string
 }
 
 func (kv *KVServer) applier() {
 	for m := range kv.applyCh {
 		kv.mu.Lock()
 		if m.SnapshotValid {
+
 		} else if m.CommandValid {
 			if m.CommandIndex <= kv.lastApplied {
 				panic(fmt.Sprintf("index error %d vs %d", m.CommandIndex, kv.lastApplied))
 			}
 			kv.lastApplied = m.CommandIndex
 			op := m.Command.(Op)
+			unique := op.Unique
+			kv.indexReq[m.CommandIndex] = unique
 			if op.Type == OpGet {
 				if val, ok := kv.repo[op.Key]; ok {
-					kv.getResult[m.CommandIndex] = val
+					kv.cache[unique] = val
 				} else {
-					kv.getResult[m.CommandIndex] = nil
+					kv.cache[unique] = nil
 				}
 			} else if op.Type == OpPut {
 				kv.repo[op.Key] = op.Value
+				kv.cache[unique] = true
 			} else if op.Type == OpAppend {
 				kv.repo[op.Key] = kv.repo[op.Key] + op.Value
+				kv.cache[unique] = true
 			}
 		}
 		kv.mu.Unlock()
 	}
 }
 
+func makeUnique(id int64, seq int64) string {
+	return fmt.Sprintf("%d-%d", id, seq)
+}
+
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	op := Op{
-		Type: OpGet,
-		Key:  args.Key,
+	kv.mu.Lock()
+	unique := makeUnique(args.Id, args.Seq)
+	if val, ok := kv.cache[unique]; ok {
+		if val != nil {
+			reply.Err = OK
+			reply.Value = val.(string)
+		} else {
+			reply.Err = ErrNoKey
+		}
+		kv.mu.Unlock()
+		return
 	}
+	kv.mu.Unlock()
 
-	index, _, isLeader := kv.rf.Start(op)
+	op := Op{
+		Type:   OpGet,
+		Key:    args.Key,
+		Unique: unique,
+	}
+	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
 	for kv.killed() == false {
 		kv.mu.Lock()
-		if kv.lastApplied < index {
+		ct, cl := kv.rf.GetState()
+		if !cl || ct != term {
+			reply.Err = ErrWrongLeader
 			kv.mu.Unlock()
-			time.Sleep(3 * time.Millisecond)
+			return
+		}
+		if kv.lastApplied < index {
+			DPrintf("get try next %d, %d", kv.lastApplied, index)
+			kv.mu.Unlock()
+			time.Sleep(1 * time.Millisecond)
 			continue
 		}
-		val := kv.getResult[index]
+		id, ok := kv.indexReq[index]
+		if !ok || id != unique {
+			reply.Err = ErrWrongLeader
+			kv.mu.Unlock()
+			return
+		}
+		val := kv.cache[id]
 		kv.mu.Unlock()
+
 		if val == nil {
 			reply.Err = ErrNoKey
 			return
-		} else {
-			reply.Err = OK
-			reply.Value = val.(string)
-			return
 		}
+		reply.Err = OK
+		reply.Value = val.(string)
+		return
 	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	kv.mu.Lock()
+	unique := makeUnique(args.Id, args.Seq)
+	if val, ok := kv.cache[unique]; ok {
+		if val.(bool) {
+			reply.Err = OK
+		}
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
 	opType := OpPut
 	if args.Op == "Append" {
 		opType = OpAppend
 	}
 	op := Op{
-		Type:  OpType(opType),
-		Key:   args.Key,
-		Value: args.Value,
+		Type:   OpType(opType),
+		Key:    args.Key,
+		Value:  args.Value,
+		Unique: unique,
 	}
-	index, _, isLeader := kv.rf.Start(op)
+	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
 	for kv.killed() == false {
 		kv.mu.Lock()
+		ct, cl := kv.rf.GetState()
+		if !cl || ct != term {
+			reply.Err = ErrWrongLeader
+			kv.mu.Unlock()
+			return
+		}
+		DPrintf("put append try next %d, %d", kv.lastApplied, index)
 		if kv.lastApplied < index {
 			kv.mu.Unlock()
 			time.Sleep(3 * time.Millisecond)
 			continue
+		}
+		id, ok := kv.indexReq[index]
+		if !ok || id != unique {
+			reply.Err = ErrWrongLeader
+			kv.mu.Unlock()
+			return
 		}
 		kv.mu.Unlock()
 		reply.Err = OK
@@ -187,9 +249,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
-	kv.lastApplied = -1
+	kv.lastApplied = 0
 	kv.repo = make(map[string]string)
-	kv.getResult = make(map[int]interface{})
+	kv.cache = make(map[string]interface{})
+	kv.indexReq = make(map[int]string)
 
 	go kv.applier()
 	// You may need initialization code here.
