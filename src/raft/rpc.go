@@ -109,7 +109,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	select {
 	case ret := <-done:
 		return ret
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 		DPrintf("Raft.RequestVote %d->%d, timeout", self, server)
 		return false
 	}
@@ -258,7 +258,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	select {
 	case ret := <-done:
 		return ret
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 		DPrintf("Raft.AppendEntries %d->%d, timeout", self, server)
 		return false
 	}
@@ -349,7 +349,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	select {
 	case ret := <-done:
 		return ret
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond):
 		DPrintf("Raft.InstallSnapshot %d->%d, timeout", self, server)
 		return false
 	}
