@@ -52,11 +52,14 @@ func (ck *Clerk) Get(key string) string {
 		if !ok {
 			continue
 		}
+		if reply.Err == ErrWrongLeader {
+			continue
+		}
+		ck.lastLeader = i
 		if reply.Err == ErrNoKey {
 			break
 		}
 		if reply.Err == OK {
-			ck.lastLeader = i
 			return reply.Value
 		}
 	}
@@ -85,6 +88,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if !ok {
 			continue
 		}
+		if reply.Err == ErrWrongLeader {
+			continue
+		}
+		ck.lastLeader = i
 		if reply.Err == OK {
 			return
 		}
