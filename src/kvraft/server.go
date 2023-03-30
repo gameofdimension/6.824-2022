@@ -52,25 +52,24 @@ type KVServer struct {
 	lastApplied int
 	repo        map[string]string
 	getResult   map[int]interface{}
+	// indexTerm   map[int]int
 }
 
 func (kv *KVServer) applier() {
 	for m := range kv.applyCh {
 		kv.mu.Lock()
-		if m.CommandIndex <= kv.lastApplied {
-			panic(fmt.Sprintf("index error %d vs %d", m.CommandIndex, kv.lastApplied))
-		}
-
-		kv.lastApplied = m.CommandIndex
 		if m.SnapshotValid {
-
 		} else if m.CommandValid {
+			if m.CommandIndex <= kv.lastApplied {
+				panic(fmt.Sprintf("index error %d vs %d", m.CommandIndex, kv.lastApplied))
+			}
+			kv.lastApplied = m.CommandIndex
 			op := m.Command.(Op)
 			if op.Type == OpGet {
 				if val, ok := kv.repo[op.Key]; ok {
-					kv.getResult[kv.lastApplied] = val
+					kv.getResult[m.CommandIndex] = val
 				} else {
-					kv.getResult[kv.lastApplied] = nil
+					kv.getResult[m.CommandIndex] = nil
 				}
 			} else if op.Type == OpPut {
 				kv.repo[op.Key] = op.Value
@@ -98,7 +97,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		kv.mu.Lock()
 		if kv.lastApplied < index {
 			kv.mu.Unlock()
-			time.Sleep(11 * time.Millisecond)
+			time.Sleep(3 * time.Millisecond)
 			continue
 		}
 		val := kv.getResult[index]
@@ -134,7 +133,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		kv.mu.Lock()
 		if kv.lastApplied < index {
 			kv.mu.Unlock()
-			time.Sleep(9 * time.Millisecond)
+			time.Sleep(3 * time.Millisecond)
 			continue
 		}
 		kv.mu.Unlock()
