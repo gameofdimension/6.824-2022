@@ -3,6 +3,8 @@ package kvraft
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +55,7 @@ type KVServer struct {
 	lastApplied int
 	repo        map[string]string
 	cache       map[string]interface{}
+	clientSeq   map[int64]int64 // client id -> seq
 	indexReq    map[int]string
 }
 
@@ -69,6 +72,11 @@ func (kv *KVServer) applier() {
 			op := m.Command.(Op)
 			unique := op.Unique
 			kv.indexReq[m.CommandIndex] = unique
+			id, seq := parseReqId(unique)
+			if seq <= kv.clientSeq[id] {
+				kv.mu.Unlock()
+				continue
+			}
 			if op.Type == OpGet {
 				if val, ok := kv.repo[op.Key]; ok {
 					kv.cache[unique] = val
@@ -82,19 +90,54 @@ func (kv *KVServer) applier() {
 				kv.repo[op.Key] = kv.repo[op.Key] + op.Value
 				kv.cache[unique] = true
 			}
+			kv.clientSeq[id] = seq
 		}
 		kv.mu.Unlock()
 	}
 }
 
-func makeUnique(id int64, seq int64) string {
+func makeReqId(id int64, seq int64) string {
 	return fmt.Sprintf("%d-%d", id, seq)
+}
+
+func parseReqId(unique string) (int64, int64) {
+	arr := strings.Split(unique, "-")
+	id, _ := strconv.Atoi(arr[0])
+	seq, _ := strconv.Atoi(arr[1])
+	return int64(id), int64(seq)
+}
+
+func (kv *KVServer) pollGet(term int, index int, unique string, reply *GetReply) bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	ct, cl := kv.rf.GetState()
+	if !cl || ct != term {
+		reply.Err = ErrWrongLeader
+		return true
+	}
+	if kv.lastApplied < index {
+		return false
+	}
+	reqId, ok := kv.indexReq[index]
+	if !ok || reqId != unique {
+		reply.Err = ErrWrongLeader
+		return true
+	}
+	val := kv.cache[reqId]
+
+	if val == nil {
+		reply.Err = ErrNoKey
+		return true
+	}
+	reply.Err = OK
+	reply.Value = val.(string)
+	return true
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
-	unique := makeUnique(args.Id, args.Seq)
+	unique := makeReqId(args.Id, args.Seq)
 	if val, ok := kv.cache[unique]; ok {
 		if val != nil {
 			reply.Err = OK
@@ -118,42 +161,39 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	for kv.killed() == false {
-		kv.mu.Lock()
-		ct, cl := kv.rf.GetState()
-		if !cl || ct != term {
-			reply.Err = ErrWrongLeader
-			kv.mu.Unlock()
-			return
-		}
-		if kv.lastApplied < index {
-			DPrintf("get try next %d, %d", kv.lastApplied, index)
-			kv.mu.Unlock()
+		rc := kv.pollGet(term, index, unique, reply)
+		if !rc {
 			time.Sleep(1 * time.Millisecond)
-			continue
-		}
-		id, ok := kv.indexReq[index]
-		if !ok || id != unique {
-			reply.Err = ErrWrongLeader
-			kv.mu.Unlock()
+		} else {
 			return
 		}
-		val := kv.cache[id]
-		kv.mu.Unlock()
-
-		if val == nil {
-			reply.Err = ErrNoKey
-			return
-		}
-		reply.Err = OK
-		reply.Value = val.(string)
-		return
 	}
+}
+
+func (kv *KVServer) pollPutAppend(term int, index int, unique string, reply *PutAppendReply) bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	ct, cl := kv.rf.GetState()
+	if !cl || ct != term {
+		reply.Err = ErrWrongLeader
+		return true
+	}
+	if kv.lastApplied < index {
+		return false
+	}
+	reqId, ok := kv.indexReq[index]
+	if !ok || reqId != unique {
+		reply.Err = ErrWrongLeader
+		return true
+	}
+	reply.Err = OK
+	return true
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
-	unique := makeUnique(args.Id, args.Seq)
+	unique := makeReqId(args.Id, args.Seq)
 	if val, ok := kv.cache[unique]; ok {
 		if val.(bool) {
 			reply.Err = OK
@@ -179,28 +219,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	for kv.killed() == false {
-		kv.mu.Lock()
-		ct, cl := kv.rf.GetState()
-		if !cl || ct != term {
-			reply.Err = ErrWrongLeader
-			kv.mu.Unlock()
+		rc := kv.pollPutAppend(term, index, unique, reply)
+		if !rc {
+			time.Sleep(1 * time.Millisecond)
+		} else {
 			return
 		}
-		DPrintf("put append try next %d, %d", kv.lastApplied, index)
-		if kv.lastApplied < index {
-			kv.mu.Unlock()
-			time.Sleep(3 * time.Millisecond)
-			continue
-		}
-		id, ok := kv.indexReq[index]
-		if !ok || id != unique {
-			reply.Err = ErrWrongLeader
-			kv.mu.Unlock()
-			return
-		}
-		kv.mu.Unlock()
-		reply.Err = OK
-		return
 	}
 }
 
@@ -253,6 +277,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.repo = make(map[string]string)
 	kv.cache = make(map[string]interface{})
 	kv.indexReq = make(map[int]string)
+	kv.clientSeq = map[int64]int64{}
 
 	go kv.applier()
 	// You may need initialization code here.
