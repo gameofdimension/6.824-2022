@@ -63,38 +63,36 @@ type KVServer struct {
 
 func (kv *KVServer) applier() {
 	for m := range kv.applyCh {
-		kv.mu.Lock()
 		if m.SnapshotValid {
 
 		} else if m.CommandValid {
+			kv.mu.Lock()
 			if m.CommandIndex <= kv.lastApplied {
 				panic(fmt.Sprintf("index error %d vs %d", m.CommandIndex, kv.lastApplied))
 			}
 			kv.lastApplied = m.CommandIndex
 			op := m.Command.(Op)
-			// kv.clientTerm[m.CommandIndex] = op.Term
 			clientId, seq := op.ClientId, op.Seq
-			if seq <= kv.clientSeq[clientId] {
-				kv.mu.Unlock()
-				continue
-			}
-			if op.Type == OpGet {
-				if val, ok := kv.repo[op.Key]; ok {
-					kv.cache[clientId] = val
-				} else {
-					kv.cache[clientId] = nil
+			// new op from clientId
+			if seq > kv.clientSeq[clientId] {
+				if op.Type == OpGet {
+					if val, ok := kv.repo[op.Key]; ok {
+						kv.cache[clientId] = val
+					} else {
+						kv.cache[clientId] = nil
+					}
+				} else if op.Type == OpPut {
+					kv.repo[op.Key] = op.Value
+					kv.cache[clientId] = true
+				} else if op.Type == OpAppend {
+					kv.repo[op.Key] = kv.repo[op.Key] + op.Value
+					kv.cache[clientId] = true
 				}
-			} else if op.Type == OpPut {
-				kv.repo[op.Key] = op.Value
-				kv.cache[clientId] = true
-			} else if op.Type == OpAppend {
-				kv.repo[op.Key] = kv.repo[op.Key] + op.Value
-				kv.cache[clientId] = true
+				kv.clientSeq[clientId] = seq
+				kv.clientTerm[clientId] = op.Term
 			}
-			kv.clientSeq[clientId] = seq
-			kv.clientTerm[clientId] = op.Term
+			kv.mu.Unlock()
 		}
-		kv.mu.Unlock()
 
 		if kv.maxraftstate > 0 && kv.persister.RaftStateSize() > kv.maxraftstate {
 			data := kv.makeSnapshot()
@@ -103,7 +101,7 @@ func (kv *KVServer) applier() {
 	}
 }
 
-func (kv *KVServer) pollGet(term int, index int, clientId int64, reply *GetReply) bool {
+func (kv *KVServer) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	ct, cl := kv.rf.GetState()
@@ -114,8 +112,7 @@ func (kv *KVServer) pollGet(term int, index int, clientId int64, reply *GetReply
 	if kv.lastApplied < index {
 		return false
 	}
-	reqTerm, ok := kv.clientTerm[clientId]
-	if !ok || reqTerm != term {
+	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
 		reply.Err = ErrWrongLeader
 		return true
 	}
@@ -168,7 +165,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	for kv.killed() == false {
-		rc := kv.pollGet(term, index, args.Id, reply)
+		rc := kv.pollGet(term, index, args.Id, args.Seq, reply)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -177,7 +174,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 }
 
-func (kv *KVServer) pollPutAppend(term int, index int, clientId int64, reply *PutAppendReply) bool {
+func (kv *KVServer) pollPutAppend(term int, index int, clientId int64, seq int64, reply *PutAppendReply) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	ct, cl := kv.rf.GetState()
@@ -188,8 +185,7 @@ func (kv *KVServer) pollPutAppend(term int, index int, clientId int64, reply *Pu
 	if kv.lastApplied < index {
 		return false
 	}
-	reqTerm, ok := kv.clientTerm[clientId]
-	if !ok || reqTerm != term {
+	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
 		reply.Err = ErrWrongLeader
 		return true
 	}
@@ -234,7 +230,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	for kv.killed() == false {
-		rc := kv.pollPutAppend(term, index, args.Id, reply)
+		rc := kv.pollPutAppend(term, index, args.Id, args.Seq, reply)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
