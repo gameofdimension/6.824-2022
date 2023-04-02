@@ -16,7 +16,7 @@ import (
 const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if !Debug {
+	if Debug {
 		log.Printf(format, a...)
 	}
 	return
@@ -62,7 +62,10 @@ type KVServer struct {
 func (kv *KVServer) applier() {
 	for m := range kv.applyCh {
 		if m.SnapshotValid {
-
+			kv.mu.Lock()
+			DPrintf("server %d resume snapshot of term %d at index %d", kv.me, m.SnapshotTerm, m.SnapshotIndex)
+			kv.loadSnapshot(m.Snapshot)
+			kv.mu.Unlock()
 		} else if m.CommandValid {
 			kv.mu.Lock()
 			if m.CommandIndex <= kv.lastApplied {
@@ -73,9 +76,11 @@ func (kv *KVServer) applier() {
 			clientId, seq := op.ClientId, op.Seq
 			lastSeq, ok := kv.clientSeq[clientId]
 			// new op from clientId
-			DPrintf("get op %v", op)
-			if !ok || seq > lastSeq {
-				DPrintf("run op %v", op)
+			if !ok || seq != lastSeq {
+				DPrintf("server %d will run op %v at index %d", kv.me, op, m.CommandIndex)
+				if seq < lastSeq {
+					panic(fmt.Sprintf("smaller seq %d vs %d for %d", seq, lastSeq, clientId))
+				}
 				if op.Type == OpGet {
 					if val, ok := kv.repo[op.Key]; ok {
 						kv.cache[clientId] = val
@@ -93,6 +98,7 @@ func (kv *KVServer) applier() {
 			}
 			if kv.maxraftstate > 0 && kv.persister.RaftStateSize() > kv.maxraftstate {
 				data := kv.makeSnapshot()
+				DPrintf("server %d take snapshot at index %d", kv.me, m.CommandIndex)
 				kv.rf.Snapshot(m.CommandIndex, data)
 			}
 			kv.mu.Unlock()
@@ -318,7 +324,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.persister = persister
 	kv.applyCh = make(chan raft.ApplyMsg)
-	// DPrintf("make raft %d", me)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	kv.lastApplied = 0
@@ -326,7 +331,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.cache = make(map[int64]interface{})
 	kv.clientSeq = map[int64]int64{}
 
-	// DPrintf("StartKVServer, %d", me)
+	DPrintf("server %d StartKVServer", me)
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	go kv.applier()
 	// You may need initialization code here.
