@@ -29,6 +29,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	// You'll have to add code here.
 	ck.lastLeader = 0
 	ck.me = nrand()
+	DPrintf("MakeClerk %d", ck.me)
 	ck.seq = 0
 
 	return ck

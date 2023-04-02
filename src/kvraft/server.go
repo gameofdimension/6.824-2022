@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"strconv"
@@ -52,6 +53,7 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	persister   *raft.Persister
 	lastApplied int
 	repo        map[string]string
 	cache       map[string]interface{}
@@ -93,6 +95,11 @@ func (kv *KVServer) applier() {
 			kv.clientSeq[id] = seq
 		}
 		kv.mu.Unlock()
+
+		if kv.maxraftstate > 0 && kv.persister.RaftStateSize() > kv.maxraftstate {
+			data := kv.makeSnapshot()
+			kv.rf.Snapshot(m.CommandIndex, data)
+		}
 	}
 }
 
@@ -247,6 +254,41 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
+func (kv *KVServer) makeSnapshot() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.repo)
+	e.Encode(kv.clientSeq)
+	e.Encode(kv.cache)
+	e.Encode(kv.indexReq)
+	data := w.Bytes()
+	return data
+}
+
+func (kv *KVServer) loadSnapshot(data []byte) {
+	DPrintf("loadSnapshot %d", len(data))
+	if data == nil || len(data) == 0 {
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var repo map[string]string
+	var clientSeq map[int64]int64
+	var cache map[string]interface{}
+	var indexReq map[int]string
+	if d.Decode(&repo) != nil ||
+		d.Decode(&clientSeq) != nil ||
+		d.Decode(&cache) != nil ||
+		d.Decode(&indexReq) != nil {
+		panic("readPersist fail, Decode")
+	} else {
+		kv.repo = repo
+		kv.clientSeq = clientSeq
+		kv.cache = cache
+		kv.indexReq = indexReq
+	}
+}
+
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
@@ -269,8 +311,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.maxraftstate = maxraftstate
 
 	// You may need initialization code here.
-
+	kv.persister = persister
 	kv.applyCh = make(chan raft.ApplyMsg)
+	DPrintf("make raft %d", me)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	kv.lastApplied = 0
@@ -279,6 +322,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.indexReq = make(map[int]string)
 	kv.clientSeq = map[int64]int64{}
 
+	DPrintf("StartKVServer, %d", me)
+	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	go kv.applier()
 	// You may need initialization code here.
 
