@@ -58,7 +58,6 @@ type KVServer struct {
 	repo        map[string]string
 	cache       map[int64]interface{} // client id -> applied result
 	clientSeq   map[int64]int64       // client id -> seq
-	clientTerm  map[int64]int         // client id -> term
 }
 
 func (kv *KVServer) applier() {
@@ -89,14 +88,12 @@ func (kv *KVServer) applier() {
 					kv.cache[clientId] = true
 				}
 				kv.clientSeq[clientId] = seq
-				kv.clientTerm[clientId] = op.Term
+			}
+			if kv.maxraftstate > 0 && kv.persister.RaftStateSize() > kv.maxraftstate {
+				data := kv.makeSnapshot()
+				kv.rf.Snapshot(m.CommandIndex, data)
 			}
 			kv.mu.Unlock()
-		}
-
-		if kv.maxraftstate > 0 && kv.persister.RaftStateSize() > kv.maxraftstate {
-			data := kv.makeSnapshot()
-			kv.rf.Snapshot(m.CommandIndex, data)
 		}
 	}
 }
@@ -264,7 +261,6 @@ func (kv *KVServer) makeSnapshot() []byte {
 	e.Encode(kv.repo)
 	e.Encode(kv.clientSeq)
 	e.Encode(kv.cache)
-	e.Encode(kv.clientTerm)
 	data := w.Bytes()
 	return data
 }
@@ -279,17 +275,14 @@ func (kv *KVServer) loadSnapshot(data []byte) {
 	var repo map[string]string
 	var clientSeq map[int64]int64
 	var cache map[int64]interface{}
-	var clientTerm map[int64]int
 	if d.Decode(&repo) != nil ||
 		d.Decode(&clientSeq) != nil ||
-		d.Decode(&cache) != nil ||
-		d.Decode(&clientTerm) != nil {
+		d.Decode(&cache) != nil {
 		panic("readPersist fail, Decode")
 	} else {
 		kv.repo = repo
 		kv.clientSeq = clientSeq
 		kv.cache = cache
-		kv.clientTerm = clientTerm
 	}
 }
 
@@ -323,7 +316,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.lastApplied = 0
 	kv.repo = make(map[string]string)
 	kv.cache = make(map[int64]interface{})
-	kv.clientTerm = make(map[int64]int)
 	kv.clientSeq = map[int64]int64{}
 
 	DPrintf("StartKVServer, %d", me)
