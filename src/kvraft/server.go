@@ -16,7 +16,7 @@ import (
 const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
+	if !Debug {
 		log.Printf(format, a...)
 	}
 	return
@@ -40,7 +40,6 @@ type Op struct {
 	Value    string
 	ClientId int64
 	Seq      int64
-	Term     int
 }
 
 type KVServer struct {
@@ -72,8 +71,11 @@ func (kv *KVServer) applier() {
 			kv.lastApplied = m.CommandIndex
 			op := m.Command.(Op)
 			clientId, seq := op.ClientId, op.Seq
+			lastSeq, ok := kv.clientSeq[clientId]
 			// new op from clientId
-			if seq > kv.clientSeq[clientId] {
+			DPrintf("get op %v", op)
+			if !ok || seq > lastSeq {
+				DPrintf("run op %v", op)
 				if op.Type == OpGet {
 					if val, ok := kv.repo[op.Key]; ok {
 						kv.cache[clientId] = val
@@ -131,22 +133,25 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	kv.mu.Lock()
-	if args.Seq < kv.clientSeq[args.Id] {
-		panic(fmt.Sprintf("Get seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
-	}
-	if args.Seq == kv.clientSeq[args.Id] {
-		if val, ok := kv.cache[args.Id]; !ok {
-			panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
-		} else {
-			if val != nil {
-				reply.Err = OK
-				reply.Value = val.(string)
-			} else {
-				reply.Err = ErrNoKey
-			}
+	lastSeq, ok := kv.clientSeq[args.Id]
+	if ok {
+		if args.Seq < lastSeq {
+			panic(fmt.Sprintf("Get seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
 		}
-		kv.mu.Unlock()
-		return
+		if args.Seq == lastSeq {
+			if val, ok := kv.cache[args.Id]; !ok {
+				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+			} else {
+				if val != nil {
+					reply.Err = OK
+					reply.Value = val.(string)
+				} else {
+					reply.Err = ErrNoKey
+				}
+			}
+			kv.mu.Unlock()
+			return
+		}
 	}
 	kv.mu.Unlock()
 
@@ -197,16 +202,19 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	kv.mu.Lock()
-	if args.Seq < kv.clientSeq[args.Id] {
-		panic(fmt.Sprintf("PutAppend seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
-	}
-	if args.Seq == kv.clientSeq[args.Id] {
-		if val, ok := kv.cache[args.Id]; !ok || !val.(bool) {
-			panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+	lastSeq, ok := kv.clientSeq[args.Id]
+	if ok {
+		if args.Seq < lastSeq {
+			panic(fmt.Sprintf("PutAppend seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
 		}
-		reply.Err = OK
-		kv.mu.Unlock()
-		return
+		if args.Seq == lastSeq {
+			if val, ok := kv.cache[args.Id]; !ok || !val.(bool) {
+				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+			}
+			reply.Err = OK
+			kv.mu.Unlock()
+			return
+		}
 	}
 	kv.mu.Unlock()
 
@@ -266,7 +274,7 @@ func (kv *KVServer) makeSnapshot() []byte {
 }
 
 func (kv *KVServer) loadSnapshot(data []byte) {
-	DPrintf("loadSnapshot %d", len(data))
+	// DPrintf("loadSnapshot %d", len(data))
 	if data == nil || len(data) == 0 {
 		return
 	}
@@ -310,7 +318,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.persister = persister
 	kv.applyCh = make(chan raft.ApplyMsg)
-	DPrintf("make raft %d", me)
+	// DPrintf("make raft %d", me)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	kv.lastApplied = 0
@@ -318,7 +326,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.cache = make(map[int64]interface{})
 	kv.clientSeq = map[int64]int64{}
 
-	DPrintf("StartKVServer, %d", me)
+	// DPrintf("StartKVServer, %d", me)
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	go kv.applier()
 	// You may need initialization code here.
