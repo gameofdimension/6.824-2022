@@ -18,7 +18,7 @@ import (
 const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if !Debug {
+	if Debug {
 		log.Printf(format, a...)
 	}
 	return
@@ -41,6 +41,7 @@ type Op struct {
 	Key    string
 	Value  string
 	Unique string
+	Term   int
 }
 
 type KVServer struct {
@@ -56,9 +57,9 @@ type KVServer struct {
 	persister   *raft.Persister
 	lastApplied int
 	repo        map[string]string
-	cache       map[string]interface{}
-	clientSeq   map[int64]int64 // client id -> seq
-	indexReq    map[int]string
+	cache       map[int64]interface{} // client id -> applied result
+	clientSeq   map[int64]int64       // client id -> seq
+	indexTerm   map[int]int
 }
 
 func (kv *KVServer) applier() {
@@ -73,26 +74,26 @@ func (kv *KVServer) applier() {
 			kv.lastApplied = m.CommandIndex
 			op := m.Command.(Op)
 			unique := op.Unique
-			kv.indexReq[m.CommandIndex] = unique
-			id, seq := parseReqId(unique)
-			if seq <= kv.clientSeq[id] {
+			kv.indexTerm[m.CommandIndex] = op.Term
+			clientId, seq := parseReqId(unique)
+			if seq <= kv.clientSeq[clientId] {
 				kv.mu.Unlock()
 				continue
 			}
 			if op.Type == OpGet {
 				if val, ok := kv.repo[op.Key]; ok {
-					kv.cache[unique] = val
+					kv.cache[clientId] = val
 				} else {
-					kv.cache[unique] = nil
+					kv.cache[clientId] = nil
 				}
 			} else if op.Type == OpPut {
 				kv.repo[op.Key] = op.Value
-				kv.cache[unique] = true
+				kv.cache[clientId] = true
 			} else if op.Type == OpAppend {
 				kv.repo[op.Key] = kv.repo[op.Key] + op.Value
-				kv.cache[unique] = true
+				kv.cache[clientId] = true
 			}
-			kv.clientSeq[id] = seq
+			kv.clientSeq[clientId] = seq
 		}
 		kv.mu.Unlock()
 
@@ -114,7 +115,7 @@ func parseReqId(unique string) (int64, int64) {
 	return int64(id), int64(seq)
 }
 
-func (kv *KVServer) pollGet(term int, index int, unique string, reply *GetReply) bool {
+func (kv *KVServer) pollGet(term int, index int, clientId int64, reply *GetReply) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	ct, cl := kv.rf.GetState()
@@ -125,12 +126,12 @@ func (kv *KVServer) pollGet(term int, index int, unique string, reply *GetReply)
 	if kv.lastApplied < index {
 		return false
 	}
-	reqId, ok := kv.indexReq[index]
-	if !ok || reqId != unique {
+	reqTerm, ok := kv.indexTerm[index]
+	if !ok || reqTerm != term {
 		reply.Err = ErrWrongLeader
 		return true
 	}
-	val := kv.cache[reqId]
+	val := kv.cache[clientId]
 
 	if val == nil {
 		reply.Err = ErrNoKey
@@ -143,20 +144,31 @@ func (kv *KVServer) pollGet(term int, index int, unique string, reply *GetReply)
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
 	kv.mu.Lock()
-	unique := makeReqId(args.Id, args.Seq)
-	if val, ok := kv.cache[unique]; ok {
-		if val != nil {
-			reply.Err = OK
-			reply.Value = val.(string)
+	if args.Seq < kv.clientSeq[args.Id] {
+		panic(fmt.Sprintf("Get seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
+	}
+	if args.Seq == kv.clientSeq[args.Id] {
+		if val, ok := kv.cache[args.Id]; !ok {
+			panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
 		} else {
-			reply.Err = ErrNoKey
+			if val != nil {
+				reply.Err = OK
+				reply.Value = val.(string)
+			} else {
+				reply.Err = ErrNoKey
+			}
 		}
 		kv.mu.Unlock()
 		return
 	}
 	kv.mu.Unlock()
 
+	unique := makeReqId(args.Id, args.Seq)
 	op := Op{
 		Type:   OpGet,
 		Key:    args.Key,
@@ -168,7 +180,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	for kv.killed() == false {
-		rc := kv.pollGet(term, index, unique, reply)
+		rc := kv.pollGet(term, index, args.Id, reply)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -177,7 +189,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 }
 
-func (kv *KVServer) pollPutAppend(term int, index int, unique string, reply *PutAppendReply) bool {
+func (kv *KVServer) pollPutAppend(term int, index int, reply *PutAppendReply) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	ct, cl := kv.rf.GetState()
@@ -188,8 +200,8 @@ func (kv *KVServer) pollPutAppend(term int, index int, unique string, reply *Put
 	if kv.lastApplied < index {
 		return false
 	}
-	reqId, ok := kv.indexReq[index]
-	if !ok || reqId != unique {
+	reqTerm, ok := kv.indexTerm[index]
+	if !ok || reqTerm != term {
 		reply.Err = ErrWrongLeader
 		return true
 	}
@@ -199,17 +211,25 @@ func (kv *KVServer) pollPutAppend(term int, index int, unique string, reply *Put
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
 	kv.mu.Lock()
-	unique := makeReqId(args.Id, args.Seq)
-	if val, ok := kv.cache[unique]; ok {
-		if val.(bool) {
-			reply.Err = OK
+	if args.Seq < kv.clientSeq[args.Id] {
+		panic(fmt.Sprintf("PutAppend seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
+	}
+	if args.Seq == kv.clientSeq[args.Id] {
+		if val, ok := kv.cache[args.Id]; !ok || !val.(bool) {
+			panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
 		}
+		reply.Err = OK
 		kv.mu.Unlock()
 		return
 	}
 	kv.mu.Unlock()
 
+	unique := makeReqId(args.Id, args.Seq)
 	opType := OpPut
 	if args.Op == "Append" {
 		opType = OpAppend
@@ -226,7 +246,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	for kv.killed() == false {
-		rc := kv.pollPutAppend(term, index, unique, reply)
+		rc := kv.pollPutAppend(term, index, reply)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -260,7 +280,7 @@ func (kv *KVServer) makeSnapshot() []byte {
 	e.Encode(kv.repo)
 	e.Encode(kv.clientSeq)
 	e.Encode(kv.cache)
-	e.Encode(kv.indexReq)
+	e.Encode(kv.indexTerm)
 	data := w.Bytes()
 	return data
 }
@@ -274,18 +294,18 @@ func (kv *KVServer) loadSnapshot(data []byte) {
 	d := labgob.NewDecoder(r)
 	var repo map[string]string
 	var clientSeq map[int64]int64
-	var cache map[string]interface{}
-	var indexReq map[int]string
+	var cache map[int64]interface{}
+	var indexTerm map[int]int
 	if d.Decode(&repo) != nil ||
 		d.Decode(&clientSeq) != nil ||
 		d.Decode(&cache) != nil ||
-		d.Decode(&indexReq) != nil {
+		d.Decode(&indexTerm) != nil {
 		panic("readPersist fail, Decode")
 	} else {
 		kv.repo = repo
 		kv.clientSeq = clientSeq
 		kv.cache = cache
-		kv.indexReq = indexReq
+		kv.indexTerm = indexTerm
 	}
 }
 
@@ -318,8 +338,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.lastApplied = 0
 	kv.repo = make(map[string]string)
-	kv.cache = make(map[string]interface{})
-	kv.indexReq = make(map[int]string)
+	kv.cache = make(map[int64]interface{})
+	kv.indexTerm = make(map[int]int)
 	kv.clientSeq = map[int64]int64{}
 
 	DPrintf("StartKVServer, %d", me)
