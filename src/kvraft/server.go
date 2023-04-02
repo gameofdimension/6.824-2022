@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,11 +35,12 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type   OpType
-	Key    string
-	Value  string
-	Unique string
-	Term   int
+	Type     OpType
+	Key      string
+	Value    string
+	ClientId int64
+	Seq      int64
+	Term     int
 }
 
 type KVServer struct {
@@ -59,7 +58,7 @@ type KVServer struct {
 	repo        map[string]string
 	cache       map[int64]interface{} // client id -> applied result
 	clientSeq   map[int64]int64       // client id -> seq
-	indexTerm   map[int]int
+	clientTerm  map[int64]int         // client id -> term
 }
 
 func (kv *KVServer) applier() {
@@ -73,9 +72,8 @@ func (kv *KVServer) applier() {
 			}
 			kv.lastApplied = m.CommandIndex
 			op := m.Command.(Op)
-			unique := op.Unique
-			kv.indexTerm[m.CommandIndex] = op.Term
-			clientId, seq := parseReqId(unique)
+			// kv.clientTerm[m.CommandIndex] = op.Term
+			clientId, seq := op.ClientId, op.Seq
 			if seq <= kv.clientSeq[clientId] {
 				kv.mu.Unlock()
 				continue
@@ -94,6 +92,7 @@ func (kv *KVServer) applier() {
 				kv.cache[clientId] = true
 			}
 			kv.clientSeq[clientId] = seq
+			kv.clientTerm[clientId] = op.Term
 		}
 		kv.mu.Unlock()
 
@@ -102,17 +101,6 @@ func (kv *KVServer) applier() {
 			kv.rf.Snapshot(m.CommandIndex, data)
 		}
 	}
-}
-
-func makeReqId(id int64, seq int64) string {
-	return fmt.Sprintf("%d-%d", id, seq)
-}
-
-func parseReqId(unique string) (int64, int64) {
-	arr := strings.Split(unique, "-")
-	id, _ := strconv.Atoi(arr[0])
-	seq, _ := strconv.Atoi(arr[1])
-	return int64(id), int64(seq)
 }
 
 func (kv *KVServer) pollGet(term int, index int, clientId int64, reply *GetReply) bool {
@@ -126,7 +114,7 @@ func (kv *KVServer) pollGet(term int, index int, clientId int64, reply *GetReply
 	if kv.lastApplied < index {
 		return false
 	}
-	reqTerm, ok := kv.indexTerm[index]
+	reqTerm, ok := kv.clientTerm[clientId]
 	if !ok || reqTerm != term {
 		reply.Err = ErrWrongLeader
 		return true
@@ -168,11 +156,11 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 	kv.mu.Unlock()
 
-	unique := makeReqId(args.Id, args.Seq)
 	op := Op{
-		Type:   OpGet,
-		Key:    args.Key,
-		Unique: unique,
+		Type:     OpGet,
+		Key:      args.Key,
+		ClientId: args.Id,
+		Seq:      args.Seq,
 	}
 	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -189,7 +177,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 }
 
-func (kv *KVServer) pollPutAppend(term int, index int, reply *PutAppendReply) bool {
+func (kv *KVServer) pollPutAppend(term int, index int, clientId int64, reply *PutAppendReply) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	ct, cl := kv.rf.GetState()
@@ -200,7 +188,7 @@ func (kv *KVServer) pollPutAppend(term int, index int, reply *PutAppendReply) bo
 	if kv.lastApplied < index {
 		return false
 	}
-	reqTerm, ok := kv.indexTerm[index]
+	reqTerm, ok := kv.clientTerm[clientId]
 	if !ok || reqTerm != term {
 		reply.Err = ErrWrongLeader
 		return true
@@ -229,16 +217,16 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	kv.mu.Unlock()
 
-	unique := makeReqId(args.Id, args.Seq)
 	opType := OpPut
 	if args.Op == "Append" {
 		opType = OpAppend
 	}
 	op := Op{
-		Type:   OpType(opType),
-		Key:    args.Key,
-		Value:  args.Value,
-		Unique: unique,
+		Type:     OpType(opType),
+		Key:      args.Key,
+		Value:    args.Value,
+		ClientId: args.Id,
+		Seq:      args.Seq,
 	}
 	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -246,7 +234,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	for kv.killed() == false {
-		rc := kv.pollPutAppend(term, index, reply)
+		rc := kv.pollPutAppend(term, index, args.Id, reply)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -280,7 +268,7 @@ func (kv *KVServer) makeSnapshot() []byte {
 	e.Encode(kv.repo)
 	e.Encode(kv.clientSeq)
 	e.Encode(kv.cache)
-	e.Encode(kv.indexTerm)
+	e.Encode(kv.clientTerm)
 	data := w.Bytes()
 	return data
 }
@@ -295,17 +283,17 @@ func (kv *KVServer) loadSnapshot(data []byte) {
 	var repo map[string]string
 	var clientSeq map[int64]int64
 	var cache map[int64]interface{}
-	var indexTerm map[int]int
+	var clientTerm map[int64]int
 	if d.Decode(&repo) != nil ||
 		d.Decode(&clientSeq) != nil ||
 		d.Decode(&cache) != nil ||
-		d.Decode(&indexTerm) != nil {
+		d.Decode(&clientTerm) != nil {
 		panic("readPersist fail, Decode")
 	} else {
 		kv.repo = repo
 		kv.clientSeq = clientSeq
 		kv.cache = cache
-		kv.indexTerm = indexTerm
+		kv.clientTerm = clientTerm
 	}
 }
 
@@ -339,7 +327,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.lastApplied = 0
 	kv.repo = make(map[string]string)
 	kv.cache = make(map[int64]interface{})
-	kv.indexTerm = make(map[int]int)
+	kv.clientTerm = make(map[int64]int)
 	kv.clientSeq = map[int64]int64{}
 
 	DPrintf("StartKVServer, %d", me)
