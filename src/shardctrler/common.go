@@ -29,7 +29,8 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
+	OK            = "OK"
+	ErrOutOfRange = "out of range"
 )
 
 type Err string
