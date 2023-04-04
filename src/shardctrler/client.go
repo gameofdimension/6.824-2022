@@ -16,7 +16,8 @@ type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
 
-	me int64
+	me  int64
+	seq int64
 }
 
 func nrand() int64 {
@@ -38,6 +39,9 @@ func (ck *Clerk) Query(num int) Config {
 	args := &QueryArgs{}
 	// Your code here.
 	args.Num = num
+	ck.seq += 1
+	args.Id = ck.me
+	args.Seq = ck.seq
 	for {
 		// try each known server.
 		for _, srv := range ck.servers {
@@ -55,6 +59,9 @@ func (ck *Clerk) Join(servers map[int][]string) {
 	args := &JoinArgs{}
 	// Your code here.
 	args.Servers = servers
+	ck.seq += 1
+	args.Id = ck.me
+	args.Seq = ck.seq
 
 	for {
 		// try each known server.
@@ -73,6 +80,9 @@ func (ck *Clerk) Leave(gids []int) {
 	args := &LeaveArgs{}
 	// Your code here.
 	args.GIDs = gids
+	ck.seq += 1
+	args.Id = ck.me
+	args.Seq = ck.seq
 
 	for {
 		// try each known server.
@@ -92,6 +102,9 @@ func (ck *Clerk) Move(shard int, gid int) {
 	// Your code here.
 	args.Shard = shard
 	args.GID = gid
+	ck.seq += 1
+	args.Id = ck.me
+	args.Seq = ck.seq
 
 	for {
 		// try each known server.

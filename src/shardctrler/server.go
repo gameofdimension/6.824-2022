@@ -1,7 +1,9 @@
 package shardctrler
 
 import (
+	"fmt"
 	"sync"
+	"time"
 
 	"6.824/labgob"
 	"6.824/labrpc"
@@ -15,6 +17,10 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	// Your data here.
+	lastApplied int
+	// repo        map[string]string
+	cache     map[int64]interface{} // client id -> applied result
+	clientSeq map[int64]int64       // client id -> seq
 
 	configs []Config // indexed by config num
 }
@@ -22,108 +28,185 @@ type ShardCtrler struct {
 type OpType int
 
 const (
-	OpGet = 1
-	OpPut = 2
+	OpQuery = 1
+	OpJoin  = 2
+	OpLeave = 3
+	OpMove  = 4
 )
 
 type Op struct {
 	// Your data here.
-	Type    OpType
-	Version int
-	Config  Config
-}
-
-func (sc *ShardCtrler) putConfig(version int, config Config) bool {
-	return true
-}
-
-func (sc *ShardCtrler) getConfig(version int) (bool, *Config) {
-	return nil
+	Type     OpType
+	Args     interface{}
+	ClientId int64
+	Seq      int64
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
-	sc.mu.Lock()
-	version := len(sc.configs)
-	groups := make(map[int][]string)
-	for k, v := range sc.configs[version-1].Groups {
-		groups[k] = v
+	rc := sc.getCachedUpdate(args.Id, args.Seq)
+	if rc == -1 {
+		reply.Err = ErrWrongLeader
+		return
 	}
-	gids := []int{}
-	for k, v := range args.Servers {
-		groups[k] = v
-		gids = append(gids, k)
+	if rc == 0 {
+		reply.Err = OK
+		return
 	}
 
-	shards := add(sc.configs[version-1].Shards[:], gids)
-	config := Config{
-		Num:    version,
-		Groups: groups,
-		Shards: SliceToArr(shards),
+	op := Op{
+		Type:     OpJoin,
+		Args:     args,
+		ClientId: args.Id,
+		Seq:      args.Seq,
 	}
-	sc.mu.Unlock()
-	sc.putConfig(version, config)
+	ret := sc.update(args.Id, args.Seq, op)
+	if ret != 0 {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	reply.Err = OK
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
-	sc.mu.Lock()
-	version := len(sc.configs)
-	groups := make(map[int][]string)
-	for k, v := range sc.configs[version-1].Groups {
-		if !SliceContains(args.GIDs, k) {
-			groups[k] = v
-		}
+	rc := sc.getCachedUpdate(args.Id, args.Seq)
+	if rc == -1 {
+		reply.Err = ErrWrongLeader
+		return
 	}
-	shards := remove(sc.configs[version-1].Shards[:], args.GIDs)
-	config := Config{
-		Num:    version,
-		Groups: groups,
-		Shards: SliceToArr(shards),
+	if rc == 0 {
+		reply.Err = OK
+		return
 	}
-	sc.mu.Unlock()
-	sc.putConfig(version, config)
+
+	op := Op{
+		Type:     OpLeave,
+		Args:     args,
+		ClientId: args.Id,
+		Seq:      args.Seq,
+	}
+	ret := sc.update(args.Id, args.Seq, op)
+	if ret != 0 {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	reply.Err = OK
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
-	sc.mu.Lock()
-	version := len(sc.configs)
-	groups := make(map[int][]string)
-	for k, v := range sc.configs[version-1].Groups {
-		groups[k] = v
+	rc := sc.getCachedUpdate(args.Id, args.Seq)
+	if rc == -1 {
+		reply.Err = ErrWrongLeader
+		return
 	}
-	shards := sc.configs[version-1].Shards[:]
-	oldGid := shards[args.Shard]
-	cc := 0
-	for _, v := range shards {
-		if v == oldGid {
-			cc += 1
-		}
-	}
-	if cc == 1 {
-		delete(groups, oldGid)
+	if rc == 0 {
+		reply.Err = OK
+		return
 	}
 
-	shards[args.Shard] = args.GID
-	config := Config{
-		Num:    version,
-		Groups: groups,
-		Shards: SliceToArr(shards),
+	op := Op{
+		Type:     OpMove,
+		Args:     args,
+		ClientId: args.Id,
+		Seq:      args.Seq,
+	}
+	ret := sc.update(args.Id, args.Seq, op)
+	if ret != 0 {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	reply.Err = OK
+}
+
+func (sc *ShardCtrler) getCachedUpdate(id int64, seq int64) int {
+	if _, leader := sc.rf.GetState(); !leader {
+		// reply.Err = ErrWrongLeader
+		// return
+		return -1
+	}
+	sc.mu.Lock()
+	lastSeq, ok := sc.clientSeq[id]
+	if ok {
+		if seq < lastSeq {
+			panic(fmt.Sprintf("PutAppend seq of %d out of order [%d vs %d]", id, seq, sc.clientSeq[id]))
+		}
+		if seq == lastSeq {
+			if val, ok := sc.cache[id]; !ok || !val.(bool) {
+				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+			}
+			// reply.Err = OK
+			sc.mu.Unlock()
+			// return
+			return 0
+		}
 	}
 	sc.mu.Unlock()
-	sc.putConfig(version, config)
+	return 1
+}
+func (sc *ShardCtrler) update(id int64, seq int64, op Op) int {
+	index, term, isLeader := sc.rf.Start(op)
+	if !isLeader {
+		return -1
+	}
+	for {
+		rc := sc.pollUpdate(term, index, id, seq)
+		if rc == 1 {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			return 0
+		}
+	}
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	// Your code here.
+	if _, leader := sc.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
 	sc.mu.Lock()
-	version := args.Num
-	if version == -1 {
-		version = len(sc.configs) - 1
+	lastSeq, ok := sc.clientSeq[args.Id]
+	if ok {
+		if args.Seq < lastSeq {
+			panic(fmt.Sprintf("Get seq of %d out of order [%d vs %d]", args.Id, args.Seq, sc.clientSeq[args.Id]))
+		}
+		if args.Seq == lastSeq {
+			if val, ok := sc.cache[args.Id]; !ok {
+				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+			} else {
+				if val != nil {
+					reply.Err = OK
+					reply.Config = val.(Config)
+				} else {
+					reply.Err = ErrNoVersion
+				}
+			}
+			sc.mu.Unlock()
+			return
+		}
 	}
 	sc.mu.Unlock()
-	reply.Config = *sc.getConfig(version)
+
+	op := Op{
+		Type:     OpQuery,
+		Args:     args,
+		ClientId: args.Id,
+		Seq:      args.Seq,
+	}
+	index, term, isLeader := sc.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	for {
+		rc := sc.pollGet(term, index, args.Id, args.Seq, reply)
+		if !rc {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			return
+		}
+	}
 }
 
 // the tester calls Kill() when a ShardCtrler instance won't
@@ -156,6 +239,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
 	// Your code here.
+	sc.lastApplied = 0
+	sc.cache = make(map[int64]interface{})
+	sc.clientSeq = map[int64]int64{}
 
 	return sc
 }
