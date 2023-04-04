@@ -18,9 +18,8 @@ type ShardCtrler struct {
 
 	// Your data here.
 	lastApplied int
-	// repo        map[string]string
-	cache     map[int64]interface{} // client id -> applied result
-	clientSeq map[int64]int64       // client id -> seq
+	cache       map[int64]interface{} // client id -> applied result
+	clientSeq   map[int64]int64       // client id -> seq
 
 	configs []Config // indexed by config num
 }
