@@ -122,8 +122,6 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 
 func (sc *ShardCtrler) getCachedUpdate(id int64, seq int64) int {
 	if _, leader := sc.rf.GetState(); !leader {
-		// reply.Err = ErrWrongLeader
-		// return
 		return -1
 	}
 	sc.mu.Lock()
@@ -136,9 +134,7 @@ func (sc *ShardCtrler) getCachedUpdate(id int64, seq int64) int {
 			if val, ok := sc.cache[id]; !ok || !val.(bool) {
 				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
 			}
-			// reply.Err = OK
 			sc.mu.Unlock()
-			// return
 			return 0
 		}
 	}

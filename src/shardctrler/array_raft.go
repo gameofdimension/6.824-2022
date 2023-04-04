@@ -2,17 +2,7 @@ package shardctrler
 
 import (
 	"fmt"
-	"log"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
 
 func (sc *ShardCtrler) applier() {
 	for m := range sc.applyCh {

@@ -1,7 +1,18 @@
 package shardctrler
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
+const Debug = false
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
 func SliceContains(hs []int, n int) bool {
 	for _, v := range hs {
 		if v == n {
