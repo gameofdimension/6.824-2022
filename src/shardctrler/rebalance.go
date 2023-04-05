@@ -17,7 +17,6 @@ func (p PairList) Less(i, j int) bool { return len(p[i].Value) < len(p[j].Value)
 func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func add(shards []int, gids []int) []int {
-	DPrintf("addddddd %v, %v", shards, gids)
 	count0 := 0
 	for _, v := range shards {
 		if v == 0 {
@@ -48,7 +47,6 @@ func add(shards []int, gids []int) []int {
 }
 
 func assign(used PairList, notUsed []int, pool []int) []int {
-	DPrintf("jjjjjjjjjj %v, %v, %v", used, notUsed, pool)
 	if len(used) > NShards {
 		panic(fmt.Sprintf("group count %d bigger than %d", len(used), NShards))
 	}
@@ -78,7 +76,6 @@ func assign(used PairList, notUsed []int, pool []int) []int {
 		if i < rmd {
 			val += 1
 		}
-		DPrintf("bbbbbbbbbbbbbbb %d, %d, %v, %d", avg, rmd, i, pool)
 		if i < used.Len() {
 			newCount[i] = Pair{Key: used[i].Key, Value: used[i].Value}
 			if len(used[i].Value) > val {

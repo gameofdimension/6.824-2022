@@ -174,18 +174,15 @@ func (sc *ShardCtrler) pollUpdate(term int, index int, clientId int64, seq int64
 	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	DPrintf("server %d pollUpdate 1111111111", sc.me)
 	if sc.lastApplied < index {
 		// return false
 		return 1
 	}
-	DPrintf("server %d pollUpdate %d vs %d", sc.me, sc.lastApplied, index)
 	if logSeq, ok := sc.clientSeq[clientId]; !ok || logSeq != seq {
 		// reply.Err = ErrWrongLeader
 		// return true
 		return -1
 	}
-	DPrintf("server %d pollUpdate 222222222222", sc.me)
 	// reply.Err = OK
 	// return true
 	return 0

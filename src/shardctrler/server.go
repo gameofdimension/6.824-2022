@@ -44,7 +44,7 @@ type Op struct {
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
-	DPrintf("server %d join233 %v", sc.me, args)
+	DPrintf("server %d join %v", sc.me, args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
 		reply.Err = ErrWrongLeader
@@ -73,7 +73,7 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
-	DPrintf("server %d leave111 %v", sc.me, args)
+	DPrintf("server %d leave %v", sc.me, args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
 		reply.Err = ErrWrongLeader
@@ -101,23 +101,17 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	// panic("88888")
 	// Your code here.
-	// DPrintf("server %d move 111 %v", sc.me, *args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
 		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
-		DPrintf("aaaaaaaaaaa")
 		return
 	}
 	if rc == 0 {
 		reply.Err = OK
-		DPrintf("bbbbbbbbbbb")
 		return
 	}
-
-	DPrintf("ccccccccc")
 
 	op := Op{
 		Type:     OpMove,
@@ -157,14 +151,12 @@ func (sc *ShardCtrler) getCachedUpdate(id int64, seq int64) int {
 }
 
 func (sc *ShardCtrler) update(id int64, seq int64, op Op) int {
-	DPrintf("1111111111111 ")
 	index, term, isLeader := sc.rf.Start(op)
 	if !isLeader {
 		return -1
 	}
 	for {
 		rc := sc.pollUpdate(term, index, id, seq)
-		DPrintf("1111111111111 %d", rc)
 		if rc == 1 {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -178,7 +170,6 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	if _, leader := sc.rf.GetState(); !leader {
 		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
-		DPrintf("ppppppppppppp")
 		return
 	}
 	sc.mu.Lock()
@@ -204,7 +195,6 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	}
 	sc.mu.Unlock()
 
-	DPrintf("oooooooooooooo")
 	op := Op{
 		Type:     OpQuery,
 		Args:     *args,
