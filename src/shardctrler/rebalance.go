@@ -100,7 +100,7 @@ func assign(used PairList, notUsed []int, pool []int) []int {
 	}
 
 	newShards := make([]int, NShards)
-	for i, _ := range newCount {
+	for i := range newCount {
 		gid := newCount[i].Key
 		for _, v := range newCount[i].Value {
 			newShards[v] = gid
