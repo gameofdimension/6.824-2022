@@ -12,9 +12,14 @@ type Pair struct {
 
 type PairList []Pair
 
-func (p PairList) Len() int           { return len(p) }
-func (p PairList) Less(i, j int) bool { return len(p[i].Value) < len(p[j].Value) }
-func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p PairList) Len() int { return len(p) }
+func (p PairList) Less(i, j int) bool {
+	if len(p[i].Value) != len(p[j].Value) {
+		return len(p[i].Value) < len(p[j].Value)
+	}
+	return p[i].Key < p[j].Key
+}
+func (p PairList) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
 
 func add(shards []int, gids []int) []int {
 	count0 := 0
