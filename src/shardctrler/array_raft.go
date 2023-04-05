@@ -64,30 +64,22 @@ func (sc *ShardCtrler) applier() {
 }
 
 func (sc *ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
-	// sc.mu.Lock()
-	// defer sc.mu.Unlock()
 	version := len(sc.configs)
 	groups := make(map[int][]string)
 	last := sc.configs[version-1]
-	// if len(last.Groups) >= NShards {
-	// return nil
-	// }
 	for k, v := range last.Groups {
 		groups[k] = v
 	}
 	for k, v := range args.Servers {
 		groups[k] = v
-		// if !SliceContains(last.Shards[:], k) {
-		// gids = append(gids, k)
-		// }
 	}
 
-	gids := []int{}
-	for k, v := range groups {
-
+	finalGids := []int{}
+	for k := range groups {
+		finalGids = append(finalGids, k)
 	}
 
-	shards := add(last.Shards[:], gids)
+	shards := add(last.Shards[:], finalGids)
 	config := Config{
 		Num:    version,
 		Groups: groups,
@@ -97,23 +89,17 @@ func (sc *ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
 }
 
 func (sc *ShardCtrler) makeConfigForLeave(args *LeaveArgs) *Config {
-	// sc.mu.Lock()
-	// defer sc.mu.Unlock()
 	version := len(sc.configs)
 	groups := make(map[int][]string)
 	last := sc.configs[version-1]
+	finalGids := make([]int, 0)
 	for k, v := range last.Groups {
 		if !SliceContains(args.GIDs, k) {
 			groups[k] = v
+			finalGids = append(finalGids, k)
 		}
 	}
-	dedup := []int{}
-	for _, gid := range args.GIDs {
-		if SliceContains(last.Shards[:], gid) {
-			dedup = append(dedup, gid)
-		}
-	}
-	shards := remove(last.Shards[:], dedup)
+	shards := remove(last.Shards[:], finalGids)
 	config := Config{
 		Num:    version,
 		Groups: groups,
@@ -123,8 +109,6 @@ func (sc *ShardCtrler) makeConfigForLeave(args *LeaveArgs) *Config {
 }
 
 func (sc *ShardCtrler) makeConfigForMove(args *MoveArgs) *Config {
-	// sc.mu.Lock()
-	// defer sc.mu.Unlock()
 	version := len(sc.configs)
 	groups := make(map[int][]string)
 	for k, v := range sc.configs[version-1].Groups {
