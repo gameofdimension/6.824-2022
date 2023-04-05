@@ -47,7 +47,6 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	DPrintf("server %d join %v", sc.me, args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -64,7 +63,6 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	}
 	ret := sc.update(args.Id, args.Seq, op)
 	if ret != 0 {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -76,7 +74,6 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	DPrintf("server %d leave %v", sc.me, args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -93,7 +90,6 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	}
 	ret := sc.update(args.Id, args.Seq, op)
 	if ret != 0 {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -104,7 +100,6 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -121,7 +116,6 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	}
 	ret := sc.update(args.Id, args.Seq, op)
 	if ret != 0 {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -168,7 +162,6 @@ func (sc *ShardCtrler) update(id int64, seq int64, op Op) int {
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	DPrintf("server %d query %v", sc.me, args)
 	if _, leader := sc.rf.GetState(); !leader {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}
@@ -203,7 +196,6 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	}
 	index, term, isLeader := sc.rf.Start(op)
 	if !isLeader {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return
 	}

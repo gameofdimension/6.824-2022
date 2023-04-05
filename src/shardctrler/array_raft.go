@@ -140,7 +140,6 @@ func (sc *ShardCtrler) pollGet(term int, index int, clientId int64, seq int64, r
 	defer sc.mu.Unlock()
 	ct, cl := sc.rf.GetState()
 	if !cl || ct != term {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return true
 	}
@@ -148,7 +147,6 @@ func (sc *ShardCtrler) pollGet(term int, index int, clientId int64, seq int64, r
 		return false
 	}
 	if logSeq, ok := sc.clientSeq[clientId]; !ok || logSeq != seq {
-		reply.Err = ErrWrongLeader
 		reply.WrongLeader = true
 		return true
 	}
