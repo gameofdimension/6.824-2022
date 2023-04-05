@@ -1,17 +1,33 @@
 package shardkv
 
+import (
+	"fmt"
+	"sync"
+	"time"
 
-import "6.824/labrpc"
-import "6.824/raft"
-import "sync"
-import "6.824/labgob"
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
+)
 
+const (
+	OpNoop   = 0
+	OpGet    = 1
+	OpPut    = 2
+	OpAppend = 3
+)
 
-
+type OpType uint64
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+
+	Type     OpType
+	Key      string
+	Value    string
+	ClientId int64
+	Seq      int64
 }
 
 type ShardKV struct {
@@ -25,30 +41,127 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	persister   *raft.Persister
+	lastApplied int
+	repo        map[string]string
+	cache       map[int64]interface{} // client id -> applied result
+	clientSeq   map[int64]int64       // client id -> seq
 }
 
-
+//	func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
+//		// Your code here.
+//	}
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+	lastSeq, ok := kv.clientSeq[args.Id]
+	if ok {
+		if args.Seq < lastSeq {
+			panic(fmt.Sprintf("Get seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
+		}
+		if args.Seq == lastSeq {
+			if val, ok := kv.cache[args.Id]; !ok {
+				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+			} else {
+				if val != nil {
+					reply.Err = OK
+					reply.Value = val.(string)
+				} else {
+					reply.Err = ErrNoKey
+				}
+			}
+			kv.mu.Unlock()
+			return
+		}
+	}
+	kv.mu.Unlock()
+
+	op := Op{
+		Type:     OpGet,
+		Key:      args.Key,
+		ClientId: args.Id,
+		Seq:      args.Seq,
+	}
+	index, term, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	for {
+		rc := kv.pollGet(term, index, args.Id, args.Seq, reply)
+		if !rc {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			return
+		}
+	}
 }
 
+//	func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+//		// Your code here.
+//	}
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+	lastSeq, ok := kv.clientSeq[args.Id]
+	if ok {
+		if args.Seq < lastSeq {
+			panic(fmt.Sprintf("PutAppend seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
+		}
+		if args.Seq == lastSeq {
+			if val, ok := kv.cache[args.Id]; !ok || !val.(bool) {
+				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
+			}
+			reply.Err = OK
+			kv.mu.Unlock()
+			return
+		}
+	}
+	kv.mu.Unlock()
+
+	opType := OpPut
+	if args.Op == "Append" {
+		opType = OpAppend
+	}
+	op := Op{
+		Type:     OpType(opType),
+		Key:      args.Key,
+		Value:    args.Value,
+		ClientId: args.Id,
+		Seq:      args.Seq,
+	}
+	index, term, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	for {
+		rc := kv.pollPutAppend(term, index, args.Id, args.Seq, reply)
+		if !rc {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			return
+		}
+	}
 }
 
-//
 // the tester calls Kill() when a ShardKV instance won't
 // be needed again. you are not required to do anything
 // in Kill(), but it might be convenient to (for example)
 // turn off debug output from this instance.
-//
 func (kv *ShardKV) Kill() {
 	kv.rf.Kill()
 	// Your code here, if desired.
 }
 
-
-//
 // servers[] contains the ports of the servers in this group.
 //
 // me is the index of the current server in servers[].
@@ -75,7 +188,6 @@ func (kv *ShardKV) Kill() {
 //
 // StartServer() must return quickly, so it should start goroutines
 // for any long-running work.
-//
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
@@ -88,14 +200,22 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.gid = gid
 	kv.ctrlers = ctrlers
 
-	// Your initialization code here.
-
-	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
-
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
+	// Your initialization code here.
+	kv.persister = persister
+	kv.lastApplied = 0
+	kv.repo = make(map[string]string)
+	kv.cache = make(map[int64]interface{})
+	kv.clientSeq = map[int64]int64{}
+
+	DPrintf("server %d StartKVServer", me)
+	kv.loadSnapshot(kv.persister.ReadSnapshot())
+	go kv.applier()
+
+	// Use something like this to talk to the shardctrler:
+	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
 	return kv
 }
