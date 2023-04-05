@@ -17,6 +17,7 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	// Your data here.
+	wl          sync.Mutex
 	lastApplied int
 	cache       map[int64]interface{} // client id -> applied result
 	clientSeq   map[int64]int64       // client id -> seq
@@ -43,9 +44,11 @@ type Op struct {
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
+	DPrintf("server %d join233 %v", sc.me, args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return
 	}
 	if rc == 0 {
@@ -55,13 +58,14 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 
 	op := Op{
 		Type:     OpJoin,
-		Args:     args,
+		Args:     *args,
 		ClientId: args.Id,
 		Seq:      args.Seq,
 	}
 	ret := sc.update(args.Id, args.Seq, op)
 	if ret != 0 {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return
 	}
 	reply.Err = OK
@@ -69,9 +73,11 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
+	DPrintf("server %d leave111 %v", sc.me, args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return
 	}
 	if rc == 0 {
@@ -81,39 +87,48 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 
 	op := Op{
 		Type:     OpLeave,
-		Args:     args,
+		Args:     *args,
 		ClientId: args.Id,
 		Seq:      args.Seq,
 	}
 	ret := sc.update(args.Id, args.Seq, op)
 	if ret != 0 {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return
 	}
 	reply.Err = OK
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
+	// panic("88888")
 	// Your code here.
+	// DPrintf("server %d move 111 %v", sc.me, *args)
 	rc := sc.getCachedUpdate(args.Id, args.Seq)
 	if rc == -1 {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
+		DPrintf("aaaaaaaaaaa")
 		return
 	}
 	if rc == 0 {
 		reply.Err = OK
+		DPrintf("bbbbbbbbbbb")
 		return
 	}
 
+	DPrintf("ccccccccc")
+
 	op := Op{
 		Type:     OpMove,
-		Args:     args,
+		Args:     *args,
 		ClientId: args.Id,
 		Seq:      args.Seq,
 	}
 	ret := sc.update(args.Id, args.Seq, op)
 	if ret != 0 {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return
 	}
 	reply.Err = OK
@@ -140,13 +155,16 @@ func (sc *ShardCtrler) getCachedUpdate(id int64, seq int64) int {
 	sc.mu.Unlock()
 	return 1
 }
+
 func (sc *ShardCtrler) update(id int64, seq int64, op Op) int {
+	DPrintf("1111111111111 ")
 	index, term, isLeader := sc.rf.Start(op)
 	if !isLeader {
 		return -1
 	}
 	for {
 		rc := sc.pollUpdate(term, index, id, seq)
+		DPrintf("1111111111111 %d", rc)
 		if rc == 1 {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -156,8 +174,11 @@ func (sc *ShardCtrler) update(id int64, seq int64, op Op) int {
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
+	DPrintf("server %d query %v", sc.me, args)
 	if _, leader := sc.rf.GetState(); !leader {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
+		DPrintf("ppppppppppppp")
 		return
 	}
 	sc.mu.Lock()
@@ -183,15 +204,17 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	}
 	sc.mu.Unlock()
 
+	DPrintf("oooooooooooooo")
 	op := Op{
 		Type:     OpQuery,
-		Args:     args,
+		Args:     *args,
 		ClientId: args.Id,
 		Seq:      args.Seq,
 	}
 	index, term, isLeader := sc.rf.Start(op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return
 	}
 	for {
@@ -230,6 +253,14 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.configs[0].Groups = map[int][]string{}
 
 	labgob.Register(Op{})
+	labgob.Register(QueryArgs{})
+	labgob.Register(QueryReply{})
+	labgob.Register(JoinArgs{})
+	labgob.Register(JoinReply{})
+	labgob.Register(LeaveArgs{})
+	labgob.Register(LeaveReply{})
+	labgob.Register(MoveArgs{})
+	labgob.Register(MoveReply{})
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
@@ -238,5 +269,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.cache = make(map[int64]interface{})
 	sc.clientSeq = map[int64]int64{}
 
+	go sc.applier()
 	return sc
 }

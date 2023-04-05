@@ -64,3 +64,17 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("expect 3 count [%d vs %d]", 4, count3)
 	}
 }
+
+func TestDebug(t *testing.T) {
+	shards := []int{1, 1, 1, 1, 1, 2, 2, 2, 2, 2}
+	newShards := remove(shards, []int{1})
+	for _, v := range newShards {
+		if v != 2 {
+			t.Fatalf("expect %d vs %d", v, 2)
+		}
+	}
+
+	shards = []int{1170, 1170, 1170, 1170, 1160, 1160, 1160, 1170, 1160, 1160}
+	newShards = remove(shards, []int{1170})
+	t.Fatalf("bbbbbb %v", newShards)
+}

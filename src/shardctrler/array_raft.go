@@ -17,13 +17,14 @@ func (sc *ShardCtrler) applier() {
 			clientId, seq := op.ClientId, op.Seq
 			lastSeq, ok := sc.clientSeq[clientId]
 			// new op from clientId
+			DPrintf("server %d receive op %v at index %d", sc.me, op, m.CommandIndex)
 			if !ok || seq != lastSeq {
 				DPrintf("server %d will run op %v at index %d", sc.me, op, m.CommandIndex)
 				if seq < lastSeq {
 					panic(fmt.Sprintf("smaller seq %d vs %d for %d", seq, lastSeq, clientId))
 				}
 				if op.Type == OpQuery {
-					args := op.Args.(*QueryArgs)
+					args := op.Args.(QueryArgs)
 					version := args.Num
 					if version == -1 {
 						version = len(sc.configs) - 1
@@ -34,18 +35,23 @@ func (sc *ShardCtrler) applier() {
 						sc.cache[clientId] = nil
 					}
 				} else if op.Type == OpJoin {
-					args := op.Args.(*JoinArgs)
-					config := sc.makeConfigForJoin(args)
-					sc.configs = append(sc.configs, *config)
+					args := op.Args.(JoinArgs)
+					config := sc.makeConfigForJoin(&args)
+					DPrintf("server %d latest config after join %v", sc.me, config)
+					if config != nil {
+						sc.configs = append(sc.configs, *config)
+					}
 					sc.cache[clientId] = true
 				} else if op.Type == OpLeave {
-					args := op.Args.(*LeaveArgs)
-					config := sc.makeConfigForLeave(args)
+					args := op.Args.(LeaveArgs)
+					config := sc.makeConfigForLeave(&args)
+					DPrintf("server %d latest config after leave %v", sc.me, config)
 					sc.configs = append(sc.configs, *config)
 					sc.cache[clientId] = true
 				} else if op.Type == OpMove {
-					args := op.Args.(*MoveArgs)
-					config := sc.makeConfigForMove(args)
+					args := op.Args.(MoveArgs)
+					config := sc.makeConfigForMove(&args)
+					DPrintf("server %d latest config after move %v", sc.me, config)
 					sc.configs = append(sc.configs, *config)
 					sc.cache[clientId] = true
 				}
@@ -57,21 +63,28 @@ func (sc *ShardCtrler) applier() {
 
 }
 
-func (sc ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
+func (sc *ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
+	// sc.mu.Lock()
+	// defer sc.mu.Unlock()
 	version := len(sc.configs)
 	groups := make(map[int][]string)
 	last := sc.configs[version-1]
+	// if len(last.Groups) >= NShards {
+	// return nil
+	// }
 	for k, v := range last.Groups {
 		groups[k] = v
 	}
-	gids := []int{}
 	for k, v := range args.Servers {
-		if !SliceContains(last.Shards[:], k) {
-			groups[k] = v
-			gids = append(gids, k)
-		}
+		groups[k] = v
+		// if !SliceContains(last.Shards[:], k) {
+		// gids = append(gids, k)
+		// }
+	}
+
+	gids := []int{}
+	for k, v := range groups {
+
 	}
 
 	shards := add(last.Shards[:], gids)
@@ -83,9 +96,9 @@ func (sc ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
 	return &config
 }
 
-func (sc ShardCtrler) makeConfigForLeave(args *LeaveArgs) *Config {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
+func (sc *ShardCtrler) makeConfigForLeave(args *LeaveArgs) *Config {
+	// sc.mu.Lock()
+	// defer sc.mu.Unlock()
 	version := len(sc.configs)
 	groups := make(map[int][]string)
 	last := sc.configs[version-1]
@@ -109,9 +122,9 @@ func (sc ShardCtrler) makeConfigForLeave(args *LeaveArgs) *Config {
 	return &config
 }
 
-func (sc ShardCtrler) makeConfigForMove(args *MoveArgs) *Config {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
+func (sc *ShardCtrler) makeConfigForMove(args *MoveArgs) *Config {
+	// sc.mu.Lock()
+	// defer sc.mu.Unlock()
 	version := len(sc.configs)
 	groups := make(map[int][]string)
 	for k, v := range sc.configs[version-1].Groups {
@@ -144,6 +157,7 @@ func (sc *ShardCtrler) pollGet(term int, index int, clientId int64, seq int64, r
 	ct, cl := sc.rf.GetState()
 	if !cl || ct != term {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return true
 	}
 	if sc.lastApplied < index {
@@ -151,6 +165,7 @@ func (sc *ShardCtrler) pollGet(term int, index int, clientId int64, seq int64, r
 	}
 	if logSeq, ok := sc.clientSeq[clientId]; !ok || logSeq != seq {
 		reply.Err = ErrWrongLeader
+		reply.WrongLeader = true
 		return true
 	}
 	val := sc.cache[clientId]
@@ -166,23 +181,27 @@ func (sc *ShardCtrler) pollGet(term int, index int, clientId int64, seq int64, r
 }
 
 func (sc *ShardCtrler) pollUpdate(term int, index int, clientId int64, seq int64) int {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
+	DPrintf("server %d pollUpdate", sc.me)
 	ct, cl := sc.rf.GetState()
 	if !cl || ct != term {
 		// reply.Err = ErrWrongLeader
 		// return true
 		return -1
 	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	DPrintf("server %d pollUpdate 1111111111", sc.me)
 	if sc.lastApplied < index {
 		// return false
 		return 1
 	}
+	DPrintf("server %d pollUpdate %d vs %d", sc.me, sc.lastApplied, index)
 	if logSeq, ok := sc.clientSeq[clientId]; !ok || logSeq != seq {
 		// reply.Err = ErrWrongLeader
 		// return true
 		return -1
 	}
+	DPrintf("server %d pollUpdate 222222222222", sc.me)
 	// reply.Err = OK
 	// return true
 	return 0
