@@ -3,15 +3,27 @@ package shardkv
 import (
 	"bytes"
 	"fmt"
+	"time"
 
 	"6.824/labgob"
 )
+
+func (kv *ShardKV) configFetcher() {
+	for {
+		config := kv.mck.Query(-1)
+		DPrintf("get config %v", config)
+		kv.mu.Lock()
+		kv.config = config
+		kv.mu.Unlock()
+		time.Sleep(73 * time.Millisecond)
+	}
+}
 
 func (kv *ShardKV) applier() {
 	for m := range kv.applyCh {
 		if m.SnapshotValid {
 			kv.mu.Lock()
-			DPrintf("server %d resume snapshot of term %d at index %d", kv.me, m.SnapshotTerm, m.SnapshotIndex)
+			DPrintf("server %d of group %d resume snapshot of term %d at index %d", kv.me, kv.gid, m.SnapshotTerm, m.SnapshotIndex)
 			kv.loadSnapshot(m.Snapshot)
 			kv.mu.Unlock()
 		} else if m.CommandValid {
@@ -25,7 +37,7 @@ func (kv *ShardKV) applier() {
 			lastSeq, ok := kv.clientSeq[clientId]
 			// new op from clientId
 			if !ok || seq != lastSeq {
-				DPrintf("server %d will run op %v at index %d", kv.me, op, m.CommandIndex)
+				DPrintf("server %d of group %d will run op %v at index %d", kv.me, kv.gid, op, m.CommandIndex)
 				if seq < lastSeq {
 					panic(fmt.Sprintf("smaller seq %d vs %d for %d", seq, lastSeq, clientId))
 				}
@@ -46,7 +58,7 @@ func (kv *ShardKV) applier() {
 			}
 			if kv.maxraftstate > 0 && kv.persister.RaftStateSize() > kv.maxraftstate {
 				data := kv.makeSnapshot()
-				DPrintf("server %d take snapshot at index %d", kv.me, m.CommandIndex)
+				DPrintf("server %d of group %d take snapshot at index %d", kv.me, kv.gid, m.CommandIndex)
 				kv.rf.Snapshot(m.CommandIndex, data)
 			}
 			kv.mu.Unlock()

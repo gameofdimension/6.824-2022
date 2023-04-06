@@ -8,6 +8,7 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"6.824/shardctrler"
 )
 
 const (
@@ -41,6 +42,8 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	mck         *shardctrler.Clerk
+	config      shardctrler.Config
 	persister   *raft.Persister
 	lastApplied int
 	repo        map[string]string
@@ -53,6 +56,15 @@ type ShardKV struct {
 //	}
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	kv.mu.Lock()
+	shard := key2shard(args.Key)
+	gid := kv.config.Shards[shard]
+	if gid == 0 || gid != kv.gid {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
 	if _, leader := kv.rf.GetState(); !leader {
 		reply.Err = ErrWrongLeader
 		return
@@ -106,6 +118,15 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 //	}
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	kv.mu.Lock()
+	shard := key2shard(args.Key)
+	gid := kv.config.Shards[shard]
+	if gid == 0 || gid != kv.gid {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
 	if _, leader := kv.rf.GetState(); !leader {
 		reply.Err = ErrWrongLeader
 		return
@@ -209,13 +230,14 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.repo = make(map[string]string)
 	kv.cache = make(map[int64]interface{})
 	kv.clientSeq = map[int64]int64{}
+	kv.config = shardctrler.Config{}
 
-	DPrintf("server %d StartKVServer", me)
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
-	go kv.applier()
-
 	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	DPrintf("server %d of group %d StartKVServer", me, gid)
+	go kv.applier()
+	go kv.configFetcher()
 
 	return kv
 }
