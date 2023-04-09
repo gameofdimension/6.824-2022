@@ -3,21 +3,9 @@ package shardkv
 import (
 	"bytes"
 	"fmt"
-	"time"
 
 	"6.824/labgob"
 )
-
-func (kv *ShardKV) configFetcher() {
-	for {
-		config := kv.mck.Query(-1)
-		DPrintf("get config %v", config)
-		kv.mu.Lock()
-		kv.config = config
-		kv.mu.Unlock()
-		time.Sleep(73 * time.Millisecond)
-	}
-}
 
 func (kv *ShardKV) applier() {
 	for m := range kv.applyCh {
@@ -64,6 +52,37 @@ func (kv *ShardKV) applier() {
 			kv.mu.Unlock()
 		}
 	}
+}
+
+func (kv *ShardKV) dump(shard int) map[string]string {
+	kv.mu.Lock()
+	tmp := make(map[string]string, 0)
+	for k, v := range kv.repo {
+		if key2shard(k) == shard {
+			tmp[k] = v
+		}
+	}
+	kv.mu.Unlock()
+	return tmp
+}
+
+func (kv *ShardKV) merge(data map[string]string) {
+	kv.mu.Lock()
+	for k, v := range data {
+		kv.repo[k] = v
+	}
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
+	targetVersion := args.Version
+	if targetVersion != kv.cm.currentVersion {
+		reply.Err = ErrWrongVersion
+		return
+	}
+	kv.merge(args.ShardData)
+	reply.Err = OK
+	kv.cm.status[args.Shard] = Ready
 }
 
 func (kv *ShardKV) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {

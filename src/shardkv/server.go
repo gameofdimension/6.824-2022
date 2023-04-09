@@ -43,7 +43,7 @@ type ShardKV struct {
 
 	// Your definitions here.
 	mck         *shardctrler.Clerk
-	config      shardctrler.Config
+	cm          *ConfigManager
 	persister   *raft.Persister
 	lastApplied int
 	repo        map[string]string
@@ -58,8 +58,8 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
 	shard := key2shard(args.Key)
-	gid := kv.config.Shards[shard]
-	if gid == 0 || gid != kv.gid {
+	status := kv.cm.GetShardStatus(shard)
+	if status != Ready {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
 		return
@@ -120,8 +120,8 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
 	shard := key2shard(args.Key)
-	gid := kv.config.Shards[shard]
-	if gid == 0 || gid != kv.gid {
+	status := kv.cm.GetShardStatus(shard)
+	if status != Ready {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
 		return
@@ -230,14 +230,16 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.repo = make(map[string]string)
 	kv.cache = make(map[int64]interface{})
 	kv.clientSeq = map[int64]int64{}
-	kv.config = shardctrler.Config{}
+
+	// kv.config = shardctrler.Config{}
+	// kv.version = kv.config.Num
 
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	// Use something like this to talk to the shardctrler:
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 	DPrintf("server %d of group %d StartKVServer", me, gid)
 	go kv.applier()
-	go kv.configFetcher()
+	// go kv.configFetcher()
 
 	return kv
 }

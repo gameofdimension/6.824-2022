@@ -10,10 +10,11 @@ package shardkv
 //
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK              = "OK"
+	ErrNoKey        = "ErrNoKey"
+	ErrWrongGroup   = "ErrWrongGroup"
+	ErrWrongLeader  = "ErrWrongLeader"
+	ErrWrongVersion = "ErrWrongVersion"
 )
 
 type Err string
@@ -45,4 +46,15 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+type DumpArgs struct {
+	Version   int
+	Shard     int
+	CallerGid int
+	ShardData map[string]string
+}
+
+type DumpReply struct {
+	Err Err
 }
