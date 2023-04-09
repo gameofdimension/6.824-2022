@@ -16,6 +16,7 @@ const (
 	OpGet    = 1
 	OpPut    = 2
 	OpAppend = 3
+	OpConfig = 4
 )
 
 type OpType uint64
@@ -25,10 +26,12 @@ type Op struct {
 	// otherwise RPC will break.
 
 	Type     OpType
-	Key      string
-	Value    string
 	ClientId int64
 	Seq      int64
+
+	Key    string
+	Value  string
+	Config shardctrler.Config
 }
 
 type ShardKV struct {
@@ -42,13 +45,20 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	mck         *shardctrler.Clerk
-	cm          *ConfigManager
+	mck *shardctrler.Clerk
+	// cm          *ConfigManager
+	id          int64
 	persister   *raft.Persister
 	lastApplied int
 	repo        map[string]string
 	cache       map[int64]interface{} // client id -> applied result
 	clientSeq   map[int64]int64       // client id -> seq
+
+	currentVersion int
+	currentConfig  shardctrler.Config
+	nextVersion    int
+	nextConfig     shardctrler.Config
+	status         [shardctrler.NShards]ShardStatus
 }
 
 //	func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -58,7 +68,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
 	shard := key2shard(args.Key)
-	status := kv.cm.GetShardStatus(shard)
+	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
@@ -120,7 +130,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
 	shard := key2shard(args.Key)
-	status := kv.cm.GetShardStatus(shard)
+	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
@@ -233,6 +243,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	// kv.config = shardctrler.Config{}
 	// kv.version = kv.config.Num
+
+	kv.id = int64(314*100000000000000 + gid)
 
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	// Use something like this to talk to the shardctrler:

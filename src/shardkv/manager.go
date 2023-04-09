@@ -2,27 +2,10 @@ package shardkv
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
-	"6.824/labrpc"
 	"6.824/shardctrler"
 )
-
-type ConfigManager struct {
-	me       int
-	mu       *sync.Mutex
-	mck      *shardctrler.Clerk
-	make_end func(string) *labrpc.ClientEnd
-	gid      int
-	kv       *ShardKV
-
-	currentVersion int
-	currentConfig  shardctrler.Config
-	nextVersion    int
-	nextConfig     shardctrler.Config
-	status         [shardctrler.NShards]ShardStatus
-}
 
 const (
 	NotAssigned = 0
@@ -33,14 +16,14 @@ const (
 
 type ShardStatus uint
 
-func (cm *ConfigManager) GetShardStatus(shard int) ShardStatus {
+func (cm *ShardKV) GetShardStatus(shard int) ShardStatus {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	return cm.status[shard]
 }
 
-// 根据课程说明像是要求失去 shard 的 group 发送数据，而不是得到 shard 的拉取数据
-func (cm *ConfigManager) updateConfig(config *shardctrler.Config) {
+// 根据课程说明要求失去 shard 的 group 发送数据，而不是得到 shard 的拉取数据
+func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	cm.mu.Lock()
 	newConfig := *config
 	newVersion := newConfig.Num
@@ -70,7 +53,7 @@ func (cm *ConfigManager) updateConfig(config *shardctrler.Config) {
 	cm.mu.Unlock()
 
 	for sd, servers := range shardAddress {
-		cm.migrate(servers, sd, version, gid)
+		cm.migrateData(servers, sd, version, gid)
 		status[sd] = Ready
 	}
 
@@ -81,8 +64,8 @@ func (cm *ConfigManager) updateConfig(config *shardctrler.Config) {
 	cm.mu.Unlock()
 }
 
-func (cm *ConfigManager) migrate(servers []string, shard int, version int, gid int) bool {
-	data := cm.kv.cm.kv.dump(shard)
+func (cm *ShardKV) migrateData(servers []string, shard int, version int, gid int) bool {
+	data := cm.dump(shard)
 	for {
 		for i := 0; i < len(servers); i += 1 {
 			srv := cm.make_end(servers[i])
@@ -103,7 +86,9 @@ func (cm *ConfigManager) migrate(servers []string, shard int, version int, gid i
 	}
 }
 
-func (cm *ConfigManager) isSwitching() bool {
+func (cm *ShardKV) isSwitching() bool {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
 	if cm.nextVersion != 0 {
 		if cm.nextVersion <= cm.currentVersion {
 			panic(fmt.Sprintf("version error %d vs %d", cm.currentVersion, cm.nextVersion))
@@ -113,33 +98,40 @@ func (cm *ConfigManager) isSwitching() bool {
 	return false
 }
 
-func (cm *ConfigManager) configFetcher() {
+func (cm *ShardKV) configFetcher() {
 	for {
-		if !cm.isSwitching() {
-			config := cm.mck.Query(-1)
-			DPrintf("server %d of group %d get config %v of version %d", cm.me, cm.gid, config, config.Num)
-			if config.Num > cm.currentVersion {
-				cm.updateConfig(&config)
+		_, isLeader := cm.rf.GetState()
+		if isLeader {
+			if !cm.isSwitching() {
+				config := cm.mck.Query(-1)
+				DPrintf("server %d of group %d get config %v of version %d", cm.me, cm.gid, config, config.Num)
+				if config.Num > cm.currentVersion {
+					cm.updateConfig(&config)
+				} else {
+					DPrintf("version error %d vs %d", config.Num, cm.currentVersion)
+				}
 			} else {
-				DPrintf("version error %d vs %d", config.Num, cm.currentVersion)
-			}
-		} else {
-			cm.mu.Lock()
-			ok := true
-			DPrintf("server %d of group %v shard status %v", cm.me, cm.gid, cm.status)
-			for _, st := range cm.status {
-				if !(st == NotAssigned || st == Ready) {
-					ok = false
-					break
+				cm.mu.Lock()
+				ok := true
+				DPrintf("server %d of group %v shard status %v", cm.me, cm.gid, cm.status)
+				for _, st := range cm.status {
+					if !(st == NotAssigned || st == Ready) {
+						ok = false
+						break
+					}
+				}
+				cm.mu.Unlock()
+				if ok {
+					if cm.syncConfig(cm.nextConfig) {
+						cm.mu.Lock()
+						cm.currentConfig = cm.nextConfig
+						cm.currentVersion = cm.nextVersion
+						cm.nextVersion = 0
+						cm.mu.Unlock()
+					}
+					// todo 同步数据到 follower
 				}
 			}
-			if ok {
-				cm.currentConfig = cm.nextConfig
-				cm.currentVersion = cm.nextVersion
-				cm.nextVersion = 0
-				// todo 同步数据到 follower
-			}
-			cm.mu.Unlock()
 		}
 		time.Sleep(73 * time.Millisecond)
 	}

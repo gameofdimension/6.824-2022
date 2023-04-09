@@ -68,21 +68,24 @@ func (kv *ShardKV) dump(shard int) map[string]string {
 
 func (kv *ShardKV) merge(data map[string]string) {
 	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	for k, v := range data {
 		kv.repo[k] = v
 	}
-	kv.mu.Unlock()
 }
 
 func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
+	// 可能也需要送到 raft 去达成共识
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	targetVersion := args.Version
-	if targetVersion != kv.cm.currentVersion {
+	if targetVersion != kv.currentVersion {
 		reply.Err = ErrWrongVersion
 		return
 	}
 	kv.merge(args.ShardData)
 	reply.Err = OK
-	kv.cm.status[args.Shard] = Ready
+	kv.status[args.Shard] = Ready
 }
 
 func (kv *ShardKV) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {
