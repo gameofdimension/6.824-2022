@@ -26,6 +26,25 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	newConfig := *config
 	newVersion := newConfig.Num
 	status := [shardctrler.NShards]ShardStatus{}
+	prefix := fmt.Sprintf("update config %d of group %d version [%d vs %d]", cm.me, cm.gid, cm.currentVersion, newVersion)
+	if cm.currentVersion == 0 {
+		for i := 0; i < shardctrler.NShards; i += 1 {
+			if newConfig.Shards[i] == cm.gid {
+				status[i] = Ready
+			} else {
+				status[i] = NotAssigned
+			}
+		}
+
+		cm.nextVersion = 0
+		DPrintf("%s status %v after init", prefix, status)
+		cm.status = status
+		cm.currentVersion = newVersion
+		cm.currentConfig = newConfig
+		cm.mu.Unlock()
+		return
+	}
+	DPrintf("%s start", prefix)
 	shardAddress := make(map[int][]string, 0)
 	for i := 0; i < shardctrler.NShards; i += 1 {
 		if cm.status[i] == NotAssigned {
@@ -50,6 +69,7 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	gid := cm.gid
 	cm.mu.Unlock()
 
+	DPrintf("%s need to move data for %v", prefix, shardAddress)
 	for sd, servers := range shardAddress {
 		cm.migrateData(servers, sd, version, newVersion, gid)
 		status[sd] = Ready
@@ -71,6 +91,7 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 				cm.me, cm.gid, version, newVersion, shard, len(data))
 			args := DumpArgs{
 				OldVersion: version,
+				NewVersion: newVersion,
 				Shard:      shard,
 				CallerGid:  gid,
 				ShardData:  data,
@@ -91,8 +112,8 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 func (cm *ShardKV) isSwitching() bool {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	DPrintf("server %d of group %d current version %d vs next version %d",
-		cm.me, cm.gid, cm.currentVersion, cm.nextVersion)
+	DPrintf("fetch server %d of group %d isSwitching? %t %d vs %d",
+		cm.me, cm.gid, cm.nextVersion != 0, cm.currentVersion, cm.nextVersion)
 	if cm.nextVersion != 0 {
 		if cm.nextVersion <= cm.currentVersion {
 			panic(fmt.Sprintf(" %d vs %d", cm.currentVersion, cm.nextVersion))
@@ -106,7 +127,7 @@ func (cm *ShardKV) configFetcher() {
 	for {
 		_, isLeader := cm.rf.GetState()
 		if isLeader {
-			prefix := fmt.Sprintf("server %d of group %d", cm.me, cm.gid)
+			prefix := fmt.Sprintf("fetch server %d of group %d", cm.me, cm.gid)
 			if !cm.isSwitching() {
 				config := cm.mck.Query(-1)
 				DPrintf("%s get config %v of version %d", prefix, config.Shards, config.Num)
@@ -149,7 +170,7 @@ func (cm *ShardKV) syncConfig(nextConfig *shardctrler.Config) bool {
 	config := *nextConfig
 	op := Op{
 		Type:     OpConfig,
-		ClientId: int64(cm.me),
+		ClientId: cm.id,
 		Seq:      int64(nextConfig.Num),
 		Config:   config,
 	}

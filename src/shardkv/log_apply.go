@@ -46,6 +46,8 @@ func (kv *ShardKV) applier() {
 					kv.currentVersion = config.Num
 					kv.currentConfig = config
 					kv.nextVersion = 0
+				} else if op.Type == OpMigrate {
+					kv.merge(op.Data)
 				}
 				kv.clientSeq[clientId] = seq
 			}
@@ -83,14 +85,37 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	// 可能也需要送到 raft 去达成共识
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	targetVersion := args.OldVersion
-	if targetVersion != kv.currentVersion {
+	prefix := fmt.Sprintf("migrate handler %d of group %d with %d vs %d shard %d from group %d",
+		kv.me, kv.gid, args.OldVersion, args.NewVersion, args.Shard, args.CallerGid)
+	DPrintf("%s start", prefix)
+	if !kv.isSwitching() {
+		DPrintf("%s not switching %d", prefix, kv.nextVersion)
 		reply.Err = ErrWrongVersion
 		return
 	}
+	if args.NewVersion != kv.nextVersion {
+		DPrintf("%s version %d vs %d", prefix, args.NewVersion, kv.nextVersion)
+		reply.Err = ErrWrongVersion
+		return
+	}
+	if kv.nextConfig.Shards[args.Shard] != kv.gid {
+		panic(fmt.Sprintf("%s shard %d not data for me %d", prefix, args.Shard, kv.gid))
+	}
 	kv.merge(args.ShardData)
-	reply.Err = OK
 	kv.status[args.Shard] = Ready
+	copy := map[string]string{}
+	for k := range args.ShardData {
+		copy[k] = args.ShardData[k]
+	}
+	kv.migrateSeq += 1
+	op := Op{
+		Type:     OpMigrate,
+		ClientId: kv.id,
+		Seq:      kv.migrateSeq,
+		Data:     copy,
+	}
+	kv.rf.Start(op)
+	reply.Err = OK
 }
 
 func (kv *ShardKV) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {

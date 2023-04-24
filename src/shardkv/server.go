@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	OpNoop   = 0
-	OpGet    = 1
-	OpPut    = 2
-	OpAppend = 3
-	OpConfig = 4
+	OpNoop    = 0
+	OpGet     = 1
+	OpPut     = 2
+	OpAppend  = 3
+	OpConfig  = 4
+	OpMigrate = 5
 )
 
 type OpType uint64
@@ -32,6 +33,7 @@ type Op struct {
 	Key    string
 	Value  string
 	Config shardctrler.Config
+	Data   map[string]string
 }
 
 type ShardKV struct {
@@ -59,10 +61,15 @@ type ShardKV struct {
 	nextVersion    int
 	nextConfig     shardctrler.Config
 	status         [shardctrler.NShards]ShardStatus
+	migrateSeq     int64
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
 	kv.mu.Lock()
 	prefix := fmt.Sprintf("get handler %d of group %d with args %v", kv.me, kv.gid, *args)
 	DPrintf("%s start", prefix)
@@ -70,16 +77,12 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
-		DPrintf("%s shard %d status not ready %d", prefix, shard, status)
+		DPrintf("%s shard %d status not ready %v", prefix, shard, kv.status)
 		kv.mu.Unlock()
 		return
 	}
-	kv.mu.Unlock()
-	if _, leader := kv.rf.GetState(); !leader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	kv.mu.Lock()
+	// kv.mu.Unlock()
+	// kv.mu.Lock()
 	DPrintf("%s try get from cache", prefix)
 	lastSeq, ok := kv.clientSeq[args.Id]
 	if ok {
@@ -127,6 +130,10 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	if _, leader := kv.rf.GetState(); !leader {
+		reply.Err = ErrWrongLeader
+		return
+	}
 	kv.mu.Lock()
 	prefix := fmt.Sprintf("put handler %d of group %d with args %v", kv.me, kv.gid, *args)
 	DPrintf("%s start", prefix)
@@ -134,16 +141,12 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
-		DPrintf("%s shard %d status not ready %d", prefix, shard, status)
+		DPrintf("%s shard %d status not ready %v", prefix, shard, kv.status)
 		kv.mu.Unlock()
 		return
 	}
-	kv.mu.Unlock()
-	if _, leader := kv.rf.GetState(); !leader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	kv.mu.Lock()
+	// kv.mu.Unlock()
+	// kv.mu.Lock()
 	DPrintf("%s try get from cache", prefix)
 	lastSeq, ok := kv.clientSeq[args.Id]
 	if ok {
@@ -245,11 +248,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.cache = make(map[int64]interface{})
 	kv.clientSeq = map[int64]int64{}
 
-	// kv.config = shardctrler.Config{}
-	// kv.version = kv.config.Num
-
 	kv.id = int64(314*100000000000000 + gid)
-
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	// Use something like this to talk to the shardctrler:
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
