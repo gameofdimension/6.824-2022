@@ -41,6 +41,11 @@ func (kv *ShardKV) applier() {
 				} else if op.Type == OpAppend {
 					kv.repo[op.Key] = kv.repo[op.Key] + op.Value
 					kv.cache[clientId] = true
+				} else if op.Type == OpConfig {
+					config := op.Config
+					kv.currentVersion = config.Num
+					kv.currentConfig = config
+					kv.nextVersion = 0
 				}
 				kv.clientSeq[clientId] = seq
 			}
@@ -78,7 +83,7 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	// 可能也需要送到 raft 去达成共识
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	targetVersion := args.Version
+	targetVersion := args.OldVersion
 	if targetVersion != kv.currentVersion {
 		reply.Err = ErrWrongVersion
 		return

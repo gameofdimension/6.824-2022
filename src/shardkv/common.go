@@ -49,10 +49,11 @@ type GetReply struct {
 }
 
 type DumpArgs struct {
-	Version   int
-	Shard     int
-	CallerGid int
-	ShardData map[string]string
+	OldVersion int
+	NewVersion int
+	Shard      int
+	CallerGid  int
+	ShardData  map[string]string
 }
 
 type DumpReply struct {

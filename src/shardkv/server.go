@@ -61,16 +61,16 @@ type ShardKV struct {
 	status         [shardctrler.NShards]ShardStatus
 }
 
-//	func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-//		// Your code here.
-//	}
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	kv.mu.Lock()
+	prefix := fmt.Sprintf("get handler %d of group %d with args %v", kv.me, kv.gid, *args)
+	DPrintf("%s start", prefix)
 	shard := key2shard(args.Key)
 	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
+		DPrintf("%s shard %d status not ready %d", prefix, shard, status)
 		kv.mu.Unlock()
 		return
 	}
@@ -80,6 +80,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	kv.mu.Lock()
+	DPrintf("%s try get from cache", prefix)
 	lastSeq, ok := kv.clientSeq[args.Id]
 	if ok {
 		if args.Seq < lastSeq {
@@ -108,6 +109,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		ClientId: args.Id,
 		Seq:      args.Seq,
 	}
+	DPrintf("%s send to raft", prefix)
 	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
@@ -123,16 +125,16 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 }
 
-//	func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-//		// Your code here.
-//	}
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
+	prefix := fmt.Sprintf("put handler %d of group %d with args %v", kv.me, kv.gid, *args)
+	DPrintf("%s start", prefix)
 	shard := key2shard(args.Key)
 	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
+		DPrintf("%s shard %d status not ready %d", prefix, shard, status)
 		kv.mu.Unlock()
 		return
 	}
@@ -142,6 +144,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	kv.mu.Lock()
+	DPrintf("%s try get from cache", prefix)
 	lastSeq, ok := kv.clientSeq[args.Id]
 	if ok {
 		if args.Seq < lastSeq {
@@ -169,6 +172,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		ClientId: args.Id,
 		Seq:      args.Seq,
 	}
+	DPrintf("%s send to raft", prefix)
 	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
@@ -251,7 +255,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 	DPrintf("server %d of group %d StartKVServer", me, gid)
 	go kv.applier()
-	// go kv.configFetcher()
+	go kv.configFetcher()
 
 	return kv
 }

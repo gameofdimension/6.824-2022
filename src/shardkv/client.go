@@ -10,6 +10,7 @@ package shardkv
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -79,18 +80,24 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
+		prefix := fmt.Sprintf("client %d seq %d get key %s shard %d gid %d", ck.me, ck.seq, key, shard, gid)
+		DPrintf("%s servers %v", prefix, ck.config.Groups[gid])
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply GetReply
+				DPrintf("%s start call server %s", prefix, servers[si])
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					DPrintf("%s done", prefix)
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
+					DPrintf("%s wrong group, will switch", prefix)
 					break
 				}
+				DPrintf("%s fail %t with reply %v", prefix, ok, reply)
 				// ... not ok, or ErrWrongLeader
 			}
 		}
@@ -115,17 +122,23 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
+		prefix := fmt.Sprintf("client %d seq %d put key %s shard %d gid %d", ck.me, ck.seq, key, shard, gid)
+		DPrintf("%s servers %v", prefix, ck.config.Groups[gid])
 		if servers, ok := ck.config.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
+				DPrintf("%s start call server %s", prefix, servers[si])
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
+					DPrintf("%s done", prefix)
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {
+					DPrintf("%s wrong group, will switch", prefix)
 					break
 				}
+				DPrintf("%s fail %t with reply %v", prefix, ok, reply)
 				// ... not ok, or ErrWrongLeader
 			}
 		}
