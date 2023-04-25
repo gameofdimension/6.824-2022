@@ -79,8 +79,8 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	cm.nextVersion = newVersion
 	cm.status = status
 	cm.nextConfig = newConfig
-	cm.mu.Unlock()
 	DPrintf("%s done next version %d: %v", prefix, cm.nextVersion, cm.status)
+	cm.mu.Unlock()
 }
 
 func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVersion int, gid int) bool {
@@ -101,6 +101,9 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 			DPrintf("%s start call server %s", prefix, servers[i])
 			ok := srv.Call("ShardKV.Migrate", &args, &reply)
 			if ok && reply.Err == OK {
+				cm.mu.Lock()
+				cm.status[shard] = NoData
+				cm.mu.Unlock()
 				DPrintf("%s ok", prefix)
 				return true
 			}
@@ -124,7 +127,37 @@ func (cm *ShardKV) isSwitching() bool {
 	return false
 }
 
+func (cm *ShardKV) sendNoop() bool {
+	prefix := fmt.Sprintf("send noop server %d of group %d to raft", cm.me, cm.gid)
+	clientId := int64(cm.gid)
+	seq := cm.migrateSeq
+	op := Op{
+		Type:     OpNoop,
+		ClientId: clientId,
+		Seq:      seq,
+	}
+	index, term, isLeader := cm.rf.Start(op)
+	DPrintf("%s start", prefix)
+	if !isLeader {
+		DPrintf("%s not leader %d, %d, %t", prefix, index, term, isLeader)
+		return false
+	}
+	for {
+		stop, success := cm.pollAgreement(term, index, clientId, seq)
+		if stop {
+			return success
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
 func (cm *ShardKV) configFetcher() {
+	for {
+		if cm.sendNoop() {
+			break
+		}
+		time.Sleep(37 * time.Millisecond)
+	}
 	for {
 		_, isLeader := cm.rf.GetState()
 		if isLeader {
