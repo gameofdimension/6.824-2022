@@ -83,6 +83,7 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	id      string
 	applyCh chan ApplyMsg
 	role    RoleType
 
@@ -330,6 +331,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.nextIndex[idx] = rf.vlog.NextIndex()
 		rf.matchIndex[idx] = 0
 	}
+	rf.id = RandStr(16)
+	DPrintf("start raft %d, %s with %d vs %d", rf.me, rf.id, rf.lastApplied, rf.commitIndex)
 
 	rf.spawnWorker()
 	// start ticker goroutine to start elections
