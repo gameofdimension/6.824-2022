@@ -33,6 +33,7 @@ type Op struct {
 	Key    string
 	Value  string
 	Config shardctrler.Config
+	Shard  int
 	Data   map[string]string
 }
 
@@ -196,6 +197,9 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // in Kill(), but it might be convenient to (for example)
 // turn off debug output from this instance.
 func (kv *ShardKV) Kill() {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	DPrintf("server %d of group %d killed %d, %v", kv.me, kv.gid, kv.currentVersion, kv.status)
 	kv.rf.Kill()
 	// Your code here, if desired.
 }

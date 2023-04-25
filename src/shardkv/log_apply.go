@@ -53,6 +53,7 @@ func (kv *ShardKV) applier() {
 					kv.rf.Snapshot(m.CommandIndex, data)
 				} else if op.Type == OpMigrate {
 					kv.merge(op.Data)
+					kv.status[op.Shard] = Ready
 
 					data := kv.makeSnapshot()
 					kv.rf.Snapshot(m.CommandIndex, data)
@@ -124,6 +125,7 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 		Type:     OpMigrate,
 		ClientId: clientId,
 		Seq:      seq,
+		Shard:    args.Shard,
 		Data:     copy,
 	}
 	index, term, isLeader := kv.rf.Start(op)
