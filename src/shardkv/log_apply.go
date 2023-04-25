@@ -48,15 +48,9 @@ func (kv *ShardKV) applier() {
 					kv.currentVersion = config.Num
 					kv.currentConfig = config
 					kv.nextVersion = 0
-
-					data := kv.makeSnapshot()
-					kv.rf.Snapshot(m.CommandIndex, data)
 				} else if op.Type == OpMigrate {
 					kv.merge(op.Data)
 					kv.status[op.Shard] = Ready
-
-					data := kv.makeSnapshot()
-					kv.rf.Snapshot(m.CommandIndex, data)
 				}
 				kv.clientSeq[clientId] = seq
 			}
