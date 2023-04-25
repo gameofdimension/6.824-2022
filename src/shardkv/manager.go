@@ -81,6 +81,11 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 
 func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVersion int, gid int) bool {
 	data := cm.dump(shard)
+	cm.mu.Lock()
+	clientId := cm.id
+	cm.migrateSeq += 1
+	seq := cm.migrateSeq
+	cm.mu.Unlock()
 	for {
 		for i := 0; i < len(servers); i += 1 {
 			srv := cm.make_end(servers[i])
@@ -90,8 +95,9 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 				OldVersion: version,
 				NewVersion: newVersion,
 				Shard:      shard,
-				CallerGid:  gid,
 				ShardData:  data,
+				Id:         clientId,
+				Seq:        seq,
 			}
 			reply := DumpReply{}
 			DPrintf("%s start call server %s", prefix, servers[i])
@@ -125,8 +131,11 @@ func (cm *ShardKV) isSwitching() bool {
 
 func (cm *ShardKV) sendNoop() bool {
 	prefix := fmt.Sprintf("send noop server %d of group %d to raft", cm.me, cm.gid)
-	clientId := int64(cm.gid)
+	cm.mu.Lock()
+	clientId := cm.id
+	cm.migrateSeq += 1
 	seq := cm.migrateSeq
+	cm.mu.Unlock()
 	op := Op{
 		Type:     OpNoop,
 		ClientId: clientId,
@@ -198,8 +207,11 @@ func (cm *ShardKV) configFetcher() {
 // 将关于配置的信息同步到本 group 的所有 follower
 func (cm *ShardKV) syncConfig(nextConfig *shardctrler.Config) bool {
 	config := *nextConfig
+	cm.mu.Lock()
 	clientId := cm.id
-	seq := int64(nextConfig.Num)
+	cm.migrateSeq += 1
+	seq := cm.migrateSeq
+	cm.mu.Unlock()
 	op := Op{
 		Type:     OpConfig,
 		ClientId: clientId,

@@ -252,7 +252,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.cache = make(map[int64]interface{})
 	kv.clientSeq = map[int64]int64{}
 
-	kv.id = int64(314*100000000000000 + gid)
+	kv.id = nrand()
 	kv.loadSnapshot(kv.persister.ReadSnapshot())
 	// Use something like this to talk to the shardctrler:
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)

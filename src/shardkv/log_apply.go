@@ -97,7 +97,7 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	}
 	kv.mu.Lock()
 	prefix := fmt.Sprintf("migrate handler %d of group %d with %d vs %d shard %d from group %d",
-		kv.me, kv.gid, args.OldVersion, args.NewVersion, args.Shard, args.CallerGid)
+		kv.me, kv.gid, args.OldVersion, args.NewVersion, args.Shard, args.Id)
 	kv.mu.Unlock()
 	DPrintf("%s start", prefix)
 	if !kv.isSwitching() {
@@ -120,15 +120,14 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	for k := range args.ShardData {
 		copy[k] = args.ShardData[k]
 	}
-	kv.migrateSeq += 1
-	seq := kv.migrateSeq
-	clientId := int64(args.CallerGid)
+	clientId := args.Id
+	seq := args.Seq
 	op := Op{
 		Type:     OpMigrate,
 		ClientId: clientId,
-		Seq:      seq,
 		Shard:    args.Shard,
 		Data:     copy,
+		Seq:      seq,
 	}
 	index, term, isLeader := kv.rf.Start(op)
 	DPrintf("%s send migration to raft %d, %d, %t", prefix, index, term, isLeader)
@@ -224,7 +223,7 @@ func (kv *ShardKV) makeSnapshot() []byte {
 	e.Encode(kv.nextVersion)
 	e.Encode(kv.nextConfig)
 	e.Encode(kv.status)
-	e.Encode(kv.migrateSeq)
+	// e.Encode(kv.migrateSeq)
 	data := w.Bytes()
 	return data
 }
@@ -244,7 +243,7 @@ func (kv *ShardKV) loadSnapshot(data []byte) {
 	var nextVersion int
 	var nextConfig shardctrler.Config
 	var status [shardctrler.NShards]ShardStatus
-	var migrateSeq int64
+	// var migrateSeq int64
 	if d.Decode(&repo) != nil ||
 		d.Decode(&clientSeq) != nil ||
 		d.Decode(&cache) != nil ||
@@ -252,8 +251,8 @@ func (kv *ShardKV) loadSnapshot(data []byte) {
 		d.Decode(&currentConfig) != nil ||
 		d.Decode(&nextVersion) != nil ||
 		d.Decode(&nextConfig) != nil ||
-		d.Decode(&status) != nil ||
-		d.Decode(&migrateSeq) != nil {
+		d.Decode(&status) != nil {
+		// d.Decode(&migrateSeq) != nil {
 		panic("readPersist fail, Decode")
 	} else {
 		kv.repo = repo
@@ -264,6 +263,6 @@ func (kv *ShardKV) loadSnapshot(data []byte) {
 		kv.nextVersion = nextVersion
 		kv.nextConfig = nextConfig
 		kv.status = status
-		kv.migrateSeq = migrateSeq
+		// kv.migrateSeq = migrateSeq
 	}
 }

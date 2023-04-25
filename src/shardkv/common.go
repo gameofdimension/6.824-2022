@@ -52,8 +52,9 @@ type DumpArgs struct {
 	OldVersion int
 	NewVersion int
 	Shard      int
-	CallerGid  int
 	ShardData  map[string]string
+	Id         int64
+	Seq        int64
 }
 
 type DumpReply struct {
