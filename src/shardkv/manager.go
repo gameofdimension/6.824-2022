@@ -153,7 +153,12 @@ func (cm *ShardKV) configFetcher() {
 				}
 				cm.mu.Unlock()
 				if switchDone {
-					cm.syncConfig(&cm.nextConfig)
+					for {
+						if cm.syncConfig(&cm.nextConfig) {
+							break
+						}
+						DPrintf("%s sync config fail will retry", prefix)
+					}
 				}
 			}
 		}
@@ -164,13 +169,24 @@ func (cm *ShardKV) configFetcher() {
 // 将关于配置的信息同步到本 group 的所有 follower
 func (cm *ShardKV) syncConfig(nextConfig *shardctrler.Config) bool {
 	config := *nextConfig
+	clientId := cm.id
+	seq := int64(nextConfig.Num)
 	op := Op{
 		Type:     OpConfig,
-		ClientId: cm.id,
-		Seq:      int64(nextConfig.Num),
+		ClientId: clientId,
+		Seq:      seq,
 		Config:   config,
 	}
 	index, term, isLeader := cm.rf.Start(op)
-	DPrintf("send config change to raft %d, %d, %t", index, term, isLeader)
-	return true
+	DPrintf("send config change server %d of group %d to raft %d, %d, %t", cm.me, cm.gid, index, term, isLeader)
+	if !isLeader {
+		return false
+	}
+	for {
+		stop, success := cm.pollAgreement(term, index, clientId, seq)
+		if stop {
+			return success
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 }

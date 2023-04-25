@@ -3,6 +3,7 @@ package shardkv
 import (
 	"bytes"
 	"fmt"
+	"time"
 
 	"6.824/labgob"
 	"6.824/shardctrler"
@@ -47,12 +48,12 @@ func (kv *ShardKV) applier() {
 					kv.currentVersion = config.Num
 					kv.currentConfig = config
 					kv.nextVersion = 0
-					
+
 					data := kv.makeSnapshot()
 					kv.rf.Snapshot(m.CommandIndex, data)
 				} else if op.Type == OpMigrate {
 					kv.merge(op.Data)
-					
+
 					data := kv.makeSnapshot()
 					kv.rf.Snapshot(m.CommandIndex, data)
 				}
@@ -102,10 +103,10 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 		return
 	}
 	kv.mu.Lock()
-	defer kv.mu.Unlock()
 	if args.NewVersion != kv.nextVersion {
 		DPrintf("%s version not match %d vs %d", prefix, args.NewVersion, kv.nextVersion)
 		reply.Err = ErrWrongVersion
+		kv.mu.Unlock()
 		return
 	}
 	DPrintf("%s will merge data %d", prefix, len(args.ShardData))
@@ -117,15 +118,50 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 		copy[k] = args.ShardData[k]
 	}
 	kv.migrateSeq += 1
+	seq := kv.migrateSeq
+	clientId := int64(args.CallerGid)
 	op := Op{
 		Type:     OpMigrate,
-		ClientId: int64(args.CallerGid),
-		Seq:      kv.migrateSeq,
+		ClientId: clientId,
+		Seq:      seq,
 		Data:     copy,
 	}
 	index, term, isLeader := kv.rf.Start(op)
 	DPrintf("%s send migration to raft %d, %d, %t", prefix, index, term, isLeader)
-	reply.Err = OK
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+	for {
+		stop, success := kv.pollAgreement(term, index, clientId, seq)
+		if stop {
+			if success {
+				reply.Err = OK
+			} else {
+				reply.Err = ErrWrongLeader
+			}
+			return
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
+func (kv *ShardKV) pollAgreement(term int, index int, clientId int64, seq int64) (bool, bool) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	ct, cl := kv.rf.GetState()
+	if !cl || ct != term {
+		return true, false
+	}
+	if kv.lastApplied < index {
+		return false, false
+	}
+	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
+		return true, false
+	}
+	return true, true
 }
 
 func (kv *ShardKV) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {
