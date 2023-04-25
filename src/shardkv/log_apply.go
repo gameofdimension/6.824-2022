@@ -65,6 +65,14 @@ func (kv *ShardKV) applier() {
 }
 
 func (kv *ShardKV) dump(shard int) map[string]string {
+	DPrintf("server %d of group %d prepare shard %d to dump", kv.me, kv.gid, shard)
+	for {
+		if kv.sendNoop() {
+			break
+		}
+		time.Sleep(31 * time.Millisecond)
+	}
+	DPrintf("server %d of group %d prepare shard %d to dump synced", kv.me, kv.gid, shard)
 	kv.mu.Lock()
 	tmp := make(map[string]string, 0)
 	for k, v := range kv.repo {

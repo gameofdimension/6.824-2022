@@ -73,8 +73,8 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 	kv.mu.Lock()
 	prefix := fmt.Sprintf("get handler %d of group %d with args %v", kv.me, kv.gid, *args)
-	DPrintf("%s start", prefix)
 	shard := key2shard(args.Key)
+	DPrintf("%s start with status %v", prefix, kv.status)
 	status := kv.GetShardStatus(shard)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
@@ -137,9 +137,9 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	kv.mu.Lock()
 	prefix := fmt.Sprintf("put handler %d of group %d with args %v", kv.me, kv.gid, *args)
-	DPrintf("%s start", prefix)
 	shard := key2shard(args.Key)
 	status := kv.GetShardStatus(shard)
+	DPrintf("%s start with status %v", prefix, kv.status)
 	if status != Ready {
 		reply.Err = ErrWrongGroup
 		DPrintf("%s shard %d status not ready %v", prefix, shard, kv.status)
