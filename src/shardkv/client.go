@@ -80,7 +80,7 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
-		prefix := fmt.Sprintf("client %d seq %d get key %s shard %d gid %d", ck.me, ck.seq, key, shard, gid)
+		prefix := fmt.Sprintf("client %d seq %d get key %s shard %d group %d", ck.me, ck.seq, key, shard, gid)
 		DPrintf("%s servers %v", prefix, ck.config.Groups[gid])
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
@@ -122,7 +122,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
-		prefix := fmt.Sprintf("client %d seq %d put key %s shard %d gid %d", ck.me, ck.seq, key, shard, gid)
+		prefix := fmt.Sprintf("client %d seq %d put key %s shard %d group %d", ck.me, ck.seq, key, shard, gid)
 		DPrintf("%s servers %v", prefix, ck.config.Groups[gid])
 		if servers, ok := ck.config.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {

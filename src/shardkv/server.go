@@ -81,8 +81,6 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		kv.mu.Unlock()
 		return
 	}
-	// kv.mu.Unlock()
-	// kv.mu.Lock()
 	DPrintf("%s try get from cache", prefix)
 	lastSeq, ok := kv.clientSeq[args.Id]
 	if ok {
@@ -115,11 +113,13 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	DPrintf("%s send to raft", prefix)
 	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
+		DPrintf("%s not leader", prefix)
 		reply.Err = ErrWrongLeader
 		return
 	}
 	for {
 		rc := kv.pollGet(term, index, args.Id, args.Seq, reply)
+		DPrintf("%s pollGet return %t", prefix, rc)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -145,8 +145,6 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		kv.mu.Unlock()
 		return
 	}
-	// kv.mu.Unlock()
-	// kv.mu.Lock()
 	DPrintf("%s try get from cache", prefix)
 	lastSeq, ok := kv.clientSeq[args.Id]
 	if ok {
@@ -178,11 +176,13 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	DPrintf("%s send to raft", prefix)
 	index, term, isLeader := kv.rf.Start(op)
 	if !isLeader {
+		DPrintf("%s not leader", prefix)
 		reply.Err = ErrWrongLeader
 		return
 	}
 	for {
 		rc := kv.pollPutAppend(term, index, args.Id, args.Seq, reply)
+		DPrintf("%s pollPutAppend return %t", prefix, rc)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {

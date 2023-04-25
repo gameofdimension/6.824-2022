@@ -80,6 +80,7 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	cm.status = status
 	cm.nextConfig = newConfig
 	cm.mu.Unlock()
+	DPrintf("%s done next version %d: %v", prefix, cm.nextVersion, cm.status)
 }
 
 func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVersion int, gid int) bool {
@@ -87,7 +88,7 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 	for {
 		for i := 0; i < len(servers); i += 1 {
 			srv := cm.make_end(servers[i])
-			prefix := fmt.Sprintf("migrate from %d of group %d, version [%d vs %d], data: %d, %d",
+			prefix := fmt.Sprintf("migrate from %d of group %d, version [%d vs %d], shard: %d, %d",
 				cm.me, cm.gid, version, newVersion, shard, len(data))
 			args := DumpArgs{
 				OldVersion: version,
@@ -129,15 +130,17 @@ func (cm *ShardKV) configFetcher() {
 		if isLeader {
 			prefix := fmt.Sprintf("fetch server %d of group %d", cm.me, cm.gid)
 			if !cm.isSwitching() {
-				config := cm.mck.Query(-1)
-				DPrintf("%s get config %v of version %d", prefix, config.Shards, config.Num)
-				if config.Num > cm.currentVersion {
-					cm.updateConfig(&config)
-				} else if config.Num == cm.currentVersion {
-					DPrintf("%s version not change %d vs %d", prefix, config.Num, cm.currentVersion)
-				} else {
-					panic(fmt.Sprintf("%s smaller config version", prefix))
+				config := cm.mck.Query(cm.currentVersion + 1)
+				if config.Num == 0 {
+					DPrintf("%s no config for version %d", prefix, cm.currentVersion+1)
+					time.Sleep(103 * time.Millisecond)
+					continue
 				}
+				DPrintf("%s get config %v of version %d", prefix, config.Shards, config.Num)
+				if config.Num != cm.currentVersion+1 {
+					panic(fmt.Sprintf("%s expect version %d got %d", prefix, cm.currentVersion+1, config.Num))
+				}
+				cm.updateConfig(&config)
 			} else {
 				cm.mu.Lock()
 				switchDone := true
@@ -150,14 +153,7 @@ func (cm *ShardKV) configFetcher() {
 				}
 				cm.mu.Unlock()
 				if switchDone {
-					if cm.syncConfig(&cm.nextConfig) {
-						cm.mu.Lock()
-						cm.currentConfig = cm.nextConfig
-						cm.currentVersion = cm.nextVersion
-						cm.nextVersion = 0
-						cm.mu.Unlock()
-					}
-					// todo 同步数据到 follower
+					cm.syncConfig(&cm.nextConfig)
 				}
 			}
 		}
@@ -174,6 +170,7 @@ func (cm *ShardKV) syncConfig(nextConfig *shardctrler.Config) bool {
 		Seq:      int64(nextConfig.Num),
 		Config:   config,
 	}
-	cm.rf.Start(op)
+	index, term, isLeader := cm.rf.Start(op)
+	DPrintf("send config change to raft %d, %d, %t", index, term, isLeader)
 	return true
 }
