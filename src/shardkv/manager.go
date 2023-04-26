@@ -20,26 +20,55 @@ func (cm *ShardKV) GetShardStatus(shard int) ShardStatus {
 	return cm.status[shard]
 }
 
+func (cm *ShardKV) raftSyncOp(op *Op) bool {
+	index, term, isLeader := cm.rf.Start(*op)
+	if !isLeader {
+		return false
+	}
+	for {
+		stop, success := cm.pollAgreement(term, index, op.ClientId, op.Seq)
+		if stop {
+			return success
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
 // 根据课程说明要求失去 shard 的 group 发送数据，而不是得到 shard 的拉取数据
 func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	cm.mu.Lock()
 	newConfig := *config
 	newVersion := newConfig.Num
 	prefix := fmt.Sprintf("update config %d of group %d version [%d vs %d]", cm.me, cm.gid, cm.currentVersion, newVersion)
+	var status [shardctrler.NShards]ShardStatus
 	if cm.currentVersion == 0 {
 		for i := 0; i < shardctrler.NShards; i += 1 {
 			if newConfig.Shards[i] == cm.gid {
-				cm.status[i] = Ready
+				status[i] = Ready
 			} else {
-				cm.status[i] = NotAssigned
+				status[i] = NotAssigned
 			}
 		}
 
-		cm.nextVersion = 0
-		DPrintf("%s status %v after init", prefix, cm.status)
-		cm.currentVersion = newVersion
-		cm.currentConfig = newConfig
+		clientId := cm.id
+		cm.migrateSeq += 1
+		seq := cm.migrateSeq
 		cm.mu.Unlock()
+
+		change := ConfigChange{
+			CurrentVersion: newVersion,
+			CurrentConfig:  newConfig,
+			NextVersion:    0,
+			Status:         status,
+		}
+		op := Op{
+			Type:     OpConfig,
+			ClientId: clientId,
+			Seq:      seq,
+			Change:   change,
+		}
+		ok := cm.raftSyncOp(&op)
+		DPrintf("%s sync init change to raft ok? %t", prefix, ok)
 		return
 	}
 	DPrintf("%s start %v vs %v", prefix, cm.status, newConfig.Shards)
@@ -47,17 +76,17 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	for i := 0; i < shardctrler.NShards; i += 1 {
 		if cm.status[i] == NotAssigned {
 			if newConfig.Shards[i] != cm.gid {
-				cm.status[i] = NotAssigned
+				status[i] = NotAssigned
 			} else {
-				cm.status[i] = NoData
+				status[i] = NoData
 			}
 		} else if cm.status[i] == Ready {
 			if newConfig.Shards[i] != cm.gid {
-				cm.status[i] = Frozen
+				status[i] = Frozen
 				gid := newConfig.Shards[i]
 				shardAddress[i] = newConfig.Groups[gid]
 			} else {
-				cm.status[i] = Ready
+				status[i] = Ready
 			}
 		} else {
 			panic(fmt.Sprintf("status %d wrong for in use config, group %d, shard %d", cm.status[i], cm.gid, i))
@@ -70,16 +99,34 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 	DPrintf("%s need to move data for %v", prefix, shardAddress)
 	for sd, servers := range shardAddress {
 		cm.migrateData(servers, sd, version, newVersion, gid)
+		status[sd] = NotAssigned
+	}
+
+	change := ConfigChange{
+		CurrentVersion: cm.currentVersion,
+		CurrentConfig:  cm.currentConfig,
+		NextVersion:    newVersion,
+		NextConfig:     newConfig,
+		Status:         status,
 	}
 
 	cm.mu.Lock()
-	cm.nextVersion = newVersion
-	cm.nextConfig = newConfig
-	DPrintf("%s done next version %d: %v", prefix, cm.nextVersion, cm.status)
+	clientId := cm.id
+	cm.migrateSeq += 1
+	seq := cm.migrateSeq
 	cm.mu.Unlock()
+
+	op := Op{
+		Type:     OpConfig,
+		ClientId: clientId,
+		Seq:      seq,
+		Change:   change,
+	}
+	ok := cm.raftSyncOp(&op)
+	DPrintf("%s sync change switching [%d->%d] to raft ok? %t", prefix, cm.currentVersion, newVersion, ok)
 }
 
-func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVersion int, gid int) bool {
+func (cm *ShardKV) migrateData(servers []string, shard int, oldVersion int, newVersion int, gid int) bool {
 	data := cm.dump(shard)
 	cm.mu.Lock()
 	clientId := cm.id
@@ -90,9 +137,9 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 		for i := 0; i < len(servers); i += 1 {
 			srv := cm.make_end(servers[i])
 			prefix := fmt.Sprintf("migrate from %d of group %d, version [%d vs %d], shard: %d, %d",
-				cm.me, cm.gid, version, newVersion, shard, len(data))
+				cm.me, cm.gid, oldVersion, newVersion, shard, len(data))
 			args := DumpArgs{
-				OldVersion: version,
+				OldVersion: oldVersion,
 				NewVersion: newVersion,
 				Shard:      shard,
 				ShardData:  data,
@@ -103,9 +150,6 @@ func (cm *ShardKV) migrateData(servers []string, shard int, version int, newVers
 			DPrintf("%s start call server %s", prefix, servers[i])
 			ok := srv.Call("ShardKV.Migrate", &args, &reply)
 			if ok && reply.Err == OK {
-				cm.mu.Lock()
-				cm.status[shard] = NotAssigned
-				cm.mu.Unlock()
 				DPrintf("%s ok", prefix)
 				return true
 			}
@@ -130,7 +174,7 @@ func (cm *ShardKV) isSwitching() bool {
 }
 
 func (cm *ShardKV) sendNoop() bool {
-	prefix := fmt.Sprintf("send noop server %d of group %d to raft", cm.me, cm.gid)
+	// prefix := fmt.Sprintf("send noop server %d of group %d to raft", cm.me, cm.gid)
 	cm.mu.Lock()
 	clientId := cm.id
 	cm.migrateSeq += 1
@@ -141,22 +185,11 @@ func (cm *ShardKV) sendNoop() bool {
 		ClientId: clientId,
 		Seq:      seq,
 	}
-	index, term, isLeader := cm.rf.Start(op)
-	DPrintf("%s start", prefix)
-	if !isLeader {
-		DPrintf("%s not leader %d, %d, %t", prefix, index, term, isLeader)
-		return false
-	}
-	for {
-		stop, success := cm.pollAgreement(term, index, clientId, seq)
-		if stop {
-			return success
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
+	return cm.raftSyncOp(&op)
 }
 
 func (cm *ShardKV) configFetcher() {
+	// wait until all log applied
 	for {
 		if cm.sendNoop() {
 			break
@@ -171,7 +204,7 @@ func (cm *ShardKV) configFetcher() {
 				config := cm.mck.Query(cm.currentVersion + 1)
 				if config.Num == 0 {
 					DPrintf("%s no config for version %d", prefix, cm.currentVersion+1)
-					time.Sleep(103 * time.Millisecond)
+					time.Sleep(83 * time.Millisecond)
 					continue
 				}
 				DPrintf("%s get config %v of version %d", prefix, config.Shards, config.Num)
@@ -191,12 +224,25 @@ func (cm *ShardKV) configFetcher() {
 				}
 				cm.mu.Unlock()
 				if switchDone {
-					for {
-						if cm.syncConfig(&cm.nextConfig) {
-							break
-						}
-						DPrintf("%s sync config fail will retry", prefix)
+					cm.mu.Lock()
+					clientId := cm.id
+					cm.migrateSeq += 1
+					seq := cm.migrateSeq
+					cm.mu.Unlock()
+					change := ConfigChange{
+						CurrentVersion: cm.nextVersion,
+						CurrentConfig:  cm.nextConfig,
+						NextVersion:    0,
+						Status:         cm.status,
 					}
+					op := Op{
+						Type:     OpConfig,
+						ClientId: clientId,
+						Seq:      seq,
+						Change:   change,
+					}
+					ok := cm.raftSyncOp(&op)
+					DPrintf("%s sync change switched [%d->%d] to raft ok? %t", prefix, cm.currentVersion, cm.nextVersion, ok)
 				}
 			}
 		}
@@ -204,30 +250,30 @@ func (cm *ShardKV) configFetcher() {
 	}
 }
 
-// 将关于配置的信息同步到本 group 的所有 follower
-func (cm *ShardKV) syncConfig(nextConfig *shardctrler.Config) bool {
-	config := *nextConfig
-	cm.mu.Lock()
-	clientId := cm.id
-	cm.migrateSeq += 1
-	seq := cm.migrateSeq
-	cm.mu.Unlock()
-	op := Op{
-		Type:     OpConfig,
-		ClientId: clientId,
-		Seq:      seq,
-		Config:   config,
-	}
-	index, term, isLeader := cm.rf.Start(op)
-	DPrintf("send config change server %d of group %d to raft %d, %d, %t", cm.me, cm.gid, index, term, isLeader)
-	if !isLeader {
-		return false
-	}
-	for {
-		stop, success := cm.pollAgreement(term, index, clientId, seq)
-		if stop {
-			return success
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
-}
+// // 将关于配置的信息同步到本 group 的所有 follower
+// func (cm *ShardKV) syncConfig(nextConfig *shardctrler.Config) bool {
+// 	config := *nextConfig
+// 	cm.mu.Lock()
+// 	clientId := cm.id
+// 	cm.migrateSeq += 1
+// 	seq := cm.migrateSeq
+// 	cm.mu.Unlock()
+// 	op := Op{
+// 		Type:     OpConfig,
+// 		ClientId: clientId,
+// 		Seq:      seq,
+// 		Config:   config,
+// 	}
+// 	index, term, isLeader := cm.rf.Start(op)
+// 	DPrintf("send config change server %d of group %d to raft %d, %d, %t", cm.me, cm.gid, index, term, isLeader)
+// 	if !isLeader {
+// 		return false
+// 	}
+// 	for {
+// 		stop, success := cm.pollAgreement(term, index, clientId, seq)
+// 		if stop {
+// 			return success
+// 		}
+// 		time.Sleep(1 * time.Millisecond)
+// 	}
+// }

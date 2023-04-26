@@ -21,20 +21,31 @@ const (
 )
 
 type OpType uint64
+
+type ConfigChange struct {
+	CurrentVersion int
+	CurrentConfig  shardctrler.Config
+	NextVersion    int
+	NextConfig     shardctrler.Config
+	Status         [shardctrler.NShards]ShardStatus
+}
+
+type ShardData struct {
+	Shard int
+	Data  map[string]string
+}
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-
 	Type     OpType
 	ClientId int64
 	Seq      int64
 
-	Key    string
-	Value  string
-	Config shardctrler.Config
-	Shard  int
-	Data   map[string]string
+	Key       string
+	Value     string
+	Change    ConfigChange
+	ShardData ShardData
 }
 
 type ShardKV struct {

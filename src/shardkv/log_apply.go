@@ -44,13 +44,14 @@ func (kv *ShardKV) applier() {
 					kv.repo[op.Key] = kv.repo[op.Key] + op.Value
 					kv.cache[clientId] = true
 				} else if op.Type == OpConfig {
-					config := op.Config
-					kv.currentVersion = config.Num
-					kv.currentConfig = config
-					kv.nextVersion = 0
+					kv.currentVersion = op.Change.CurrentVersion
+					kv.currentConfig = op.Change.CurrentConfig
+					kv.nextVersion = op.Change.NextVersion
+					kv.nextConfig = op.Change.NextConfig
+					kv.status = op.Change.Status
 				} else if op.Type == OpMigrate {
-					kv.merge(op.Data)
-					kv.status[op.Shard] = Ready
+					kv.merge(op.ShardData.Data)
+					kv.status[op.ShardData.Shard] = Ready
 				}
 				kv.clientSeq[clientId] = seq
 			}
@@ -114,7 +115,7 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	}
 	DPrintf("%s will merge data %d", prefix, len(args.ShardData))
 	if kv.nextConfig.Shards[args.Shard] != kv.gid {
-		panic(fmt.Sprintf("%s shard %d not data for me %d", prefix, args.Shard, kv.gid))
+		panic(fmt.Sprintf("%s shard %d not data for me %d, %v", prefix, args.Shard, kv.gid, kv.nextConfig))
 	}
 	copy := map[string]string{}
 	for k := range args.ShardData {
@@ -122,32 +123,29 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	}
 	clientId := args.Id
 	seq := args.Seq
+	kv.mu.Unlock()
+
+	shardData := ShardData{
+		Shard: args.Shard,
+		Data:  copy,
+	}
 	op := Op{
-		Type:     OpMigrate,
-		ClientId: clientId,
-		Shard:    args.Shard,
-		Data:     copy,
-		Seq:      seq,
+		Type:      OpMigrate,
+		ClientId:  clientId,
+		Seq:       seq,
+		ShardData: shardData,
 	}
 	index, term, isLeader := kv.rf.Start(op)
 	DPrintf("%s send migration to raft %d, %d, %t", prefix, index, term, isLeader)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		kv.mu.Unlock()
 		return
 	}
-	kv.mu.Unlock()
-	for {
-		stop, success := kv.pollAgreement(term, index, clientId, seq)
-		if stop {
-			if success {
-				reply.Err = OK
-			} else {
-				reply.Err = ErrWrongLeader
-			}
-			return
-		}
-		time.Sleep(1 * time.Millisecond)
+	ok := kv.raftSyncOp(&op)
+	if ok {
+		reply.Err = OK
+	} else {
+		reply.Err = ErrWrongLeader
 	}
 }
 
