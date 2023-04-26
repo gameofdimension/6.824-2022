@@ -52,6 +52,12 @@ func (kv *ShardKV) applier() {
 				} else if op.Type == OpMigrate {
 					kv.merge(op.ShardData.Data)
 					kv.status[op.ShardData.Shard] = Ready
+					for k, v := range op.ShardData.LastClientSeq {
+						if tmp, ok := kv.clientSeq[k]; !ok || v > tmp {
+							kv.clientSeq[k] = v
+							kv.cache[k] = op.ShardData.LastClientResult[k]
+						}
+					}
 				}
 				kv.clientSeq[clientId] = seq
 			}
@@ -65,7 +71,7 @@ func (kv *ShardKV) applier() {
 	}
 }
 
-func (kv *ShardKV) dump(shard int) map[string]string {
+func (kv *ShardKV) dump(shard int) (map[string]string, map[int64]int64, map[int64]interface{}) {
 	DPrintf("server %d of group %d prepare shard %d to dump", kv.me, kv.gid, shard)
 	for {
 		if kv.sendNoop() {
@@ -81,8 +87,16 @@ func (kv *ShardKV) dump(shard int) map[string]string {
 			tmp[k] = v
 		}
 	}
+	copySeq := make(map[int64]int64)
+	for k, v := range kv.clientSeq {
+		copySeq[k] = v
+	}
+	copyResult := make(map[int64]interface{})
+	for k, v := range kv.cache {
+		copyResult[k] = v
+	}
 	kv.mu.Unlock()
-	return tmp
+	return tmp, copySeq, copyResult
 }
 
 func (kv *ShardKV) merge(data map[string]string) {
@@ -121,13 +135,23 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 	for k := range args.ShardData {
 		copy[k] = args.ShardData[k]
 	}
+	copySeq := make(map[int64]int64)
+	for k, v := range args.LastClientSeq {
+		copySeq[k] = v
+	}
+	copyResult := make(map[int64]interface{})
+	for k, v := range args.LastClientResult {
+		copyResult[k] = v
+	}
 	clientId := args.Id
 	seq := args.Seq
 	kv.mu.Unlock()
 
 	shardData := ShardData{
-		Shard: args.Shard,
-		Data:  copy,
+		Shard:            args.Shard,
+		Data:             copy,
+		LastClientSeq:    copySeq,
+		LastClientResult: copyResult,
 	}
 	op := Op{
 		Type:      OpMigrate,

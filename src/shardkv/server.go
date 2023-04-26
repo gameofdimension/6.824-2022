@@ -31,8 +31,10 @@ type ConfigChange struct {
 }
 
 type ShardData struct {
-	Shard int
-	Data  map[string]string
+	Shard            int
+	Data             map[string]string
+	LastClientSeq    map[int64]int64
+	LastClientResult map[int64]interface{}
 }
 type Op struct {
 	// Your definitions here.
@@ -261,7 +263,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.lastApplied = 0
 	kv.repo = make(map[string]string)
 	kv.cache = make(map[int64]interface{})
-	kv.clientSeq = map[int64]int64{}
+	kv.clientSeq = make(map[int64]int64)
 
 	kv.id = nrand()
 	kv.loadSnapshot(kv.persister.ReadSnapshot())

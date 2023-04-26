@@ -49,12 +49,14 @@ type GetReply struct {
 }
 
 type DumpArgs struct {
-	OldVersion int
-	NewVersion int
-	Shard      int
-	ShardData  map[string]string
-	Id         int64
-	Seq        int64
+	Id               int64
+	Seq              int64
+	OldVersion       int
+	NewVersion       int
+	Shard            int
+	ShardData        map[string]string
+	LastClientSeq    map[int64]int64
+	LastClientResult map[int64]interface{}
 }
 
 type DumpReply struct {

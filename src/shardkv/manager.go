@@ -116,7 +116,7 @@ func (cm *ShardKV) updateConfig(config *shardctrler.Config) {
 }
 
 func (cm *ShardKV) migrateData(servers []string, shard int, oldVersion int, newVersion int, gid int) bool {
-	data := cm.dump(shard)
+	data, lastSeq, lastResult := cm.dump(shard)
 	cm.mu.Lock()
 	clientId := cm.id
 	cm.migrateSeq += 1
@@ -128,12 +128,14 @@ func (cm *ShardKV) migrateData(servers []string, shard int, oldVersion int, newV
 			prefix := fmt.Sprintf("migrate from %d of group %d, version [%d vs %d], shard: %d, %d",
 				cm.me, cm.gid, oldVersion, newVersion, shard, len(data))
 			args := DumpArgs{
-				OldVersion: oldVersion,
-				NewVersion: newVersion,
-				Shard:      shard,
-				ShardData:  data,
-				Id:         clientId,
-				Seq:        seq,
+				Id:               clientId,
+				Seq:              seq,
+				OldVersion:       oldVersion,
+				NewVersion:       newVersion,
+				Shard:            shard,
+				ShardData:        data,
+				LastClientSeq:    lastSeq,
+				LastClientResult: lastResult,
 			}
 			reply := DumpReply{}
 			DPrintf("%s start call server %s", prefix, servers[i])
