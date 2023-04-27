@@ -133,7 +133,6 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 	for {
 		rc := kv.pollGet(term, index, args.Id, args.Seq, reply)
-		DPrintf("%s pollGet return %t", prefix, rc)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -196,7 +195,6 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	for {
 		rc := kv.pollPutAppend(term, index, args.Id, args.Seq, reply)
-		DPrintf("%s pollPutAppend return %t", prefix, rc)
 		if !rc {
 			time.Sleep(1 * time.Millisecond)
 		} else {
@@ -212,7 +210,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 func (kv *ShardKV) Kill() {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	DPrintf("server %d of group %d killed %d, %v", kv.me, kv.gid, kv.currentVersion, kv.status)
+	DPrintf("server %d,%d of group %d killed %d, %v", kv.me, kv.id, kv.gid, kv.currentVersion, kv.status)
 	kv.rf.Kill()
 	// Your code here, if desired.
 }

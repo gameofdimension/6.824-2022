@@ -27,7 +27,7 @@ func (kv *ShardKV) applier() {
 			lastSeq, ok := kv.clientSeq[clientId]
 			// new op from clientId
 			if !ok || seq != lastSeq {
-				DPrintf("server %d of group %d will run op %v at index %d", kv.me, kv.gid, op, m.CommandIndex)
+				DPrintf("server %d of group %d will run op %v at index %d", kv.me, kv.gid, op.Type, m.CommandIndex)
 				if seq < lastSeq {
 					panic(fmt.Sprintf("smaller seq %d vs %d for %d, %v", seq, lastSeq, clientId, op))
 				}
@@ -44,11 +44,14 @@ func (kv *ShardKV) applier() {
 					kv.repo[op.Key] = kv.repo[op.Key] + op.Value
 					kv.cache[clientId] = true
 				} else if op.Type == OpConfig {
+					DPrintf("server %d,%d of group %d apply config change [%d,%d]->[%d,%d], status %v", kv.me, kv.id, kv.gid,
+						kv.currentVersion, kv.nextVersion, op.Change.CurrentVersion, op.Change.NextVersion, op.Change.Status)
 					kv.currentVersion = op.Change.CurrentVersion
 					kv.currentConfig = op.Change.CurrentConfig
 					kv.nextVersion = op.Change.NextVersion
 					kv.nextConfig = op.Change.NextConfig
 					kv.status = op.Change.Status
+					kv.deleteShardData()
 				} else if op.Type == OpMigrate {
 					kv.merge(op.ShardData.Data)
 					kv.status[op.ShardData.Shard] = Ready
@@ -71,9 +74,18 @@ func (kv *ShardKV) applier() {
 	}
 }
 
+func (kv *ShardKV) deleteShardData() {
+	// 要扫描所有数据，效率有点低
+	for k, _ := range kv.repo {
+		if kv.status[key2shard(k)] == NotAssigned {
+			delete(kv.repo, k)
+		}
+	}
+}
+
 func (kv *ShardKV) dump(shard int) (map[string]string, map[int64]int64, map[int64]interface{}) {
 	DPrintf("server %d of group %d prepare shard %d to dump", kv.me, kv.gid, shard)
-	for {
+	for !kv.rf.Killed() {
 		if kv.sendNoop() {
 			break
 		}
@@ -101,6 +113,9 @@ func (kv *ShardKV) dump(shard int) (map[string]string, map[int64]int64, map[int6
 
 func (kv *ShardKV) merge(data map[string]string) {
 	for k, v := range data {
+		if len(v) < len(kv.repo[k]) {
+			DPrintf("merge data server %d,%d of group %d, key %s %v->%v", kv.me, kv.id, kv.gid, k, kv.repo[k], v)
+		}
 		kv.repo[k] = v
 	}
 }
@@ -111,19 +126,31 @@ func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
 		return
 	}
 	kv.mu.Lock()
-	prefix := fmt.Sprintf("migrate handler %d of group %d with %d vs %d shard %d from group %d",
-		kv.me, kv.gid, args.OldVersion, args.NewVersion, args.Shard, args.Id)
-	kv.mu.Unlock()
+	prefix := fmt.Sprintf("migrate handler %d of group %d with %d vs %d shard %d from %d seq %d, data %v",
+		kv.me, kv.gid, args.OldVersion, args.NewVersion, args.Shard, args.Id, args.Seq, args.ShardData)
 	DPrintf("%s start", prefix)
 	if !kv.isSwitching() {
 		DPrintf("%s not switching %d", prefix, kv.nextVersion)
 		reply.Err = ErrWrongVersion
+		kv.mu.Unlock()
 		return
 	}
-	kv.mu.Lock()
+	// 为什么允许调用者进度落后，因为有可能调用者失败
+	// 而此时被调用方这边已经执行成功并顺利转到下个版本
+	// 调用者因为失败了会重试，如果要严格匹配的话，就永远卡在这里了
+	if args.NewVersion < kv.nextVersion {
+		reply.Err = OK
+		kv.mu.Unlock()
+		return
+	}
 	if args.NewVersion != kv.nextVersion {
 		DPrintf("%s version not match %d vs %d", prefix, args.NewVersion, kv.nextVersion)
 		reply.Err = ErrWrongVersion
+		kv.mu.Unlock()
+		return
+	}
+	if kv.status[args.Shard] == Ready {
+		reply.Err = OK
 		kv.mu.Unlock()
 		return
 	}
@@ -274,9 +301,10 @@ func (kv *ShardKV) loadSnapshot(data []byte) {
 		d.Decode(&nextVersion) != nil ||
 		d.Decode(&nextConfig) != nil ||
 		d.Decode(&status) != nil {
-		// d.Decode(&migrateSeq) != nil {
 		panic("readPersist fail, Decode")
 	} else {
+		DPrintf("loadSnapshot server %d, %d of group %d, [%d,%d]->[%d,%d], status: %v",
+			kv.me, kv.id, kv.gid, kv.currentVersion, kv.nextVersion, currentVersion, nextVersion, status)
 		kv.repo = repo
 		kv.clientSeq = clientSeq
 		kv.cache = cache
@@ -285,6 +313,5 @@ func (kv *ShardKV) loadSnapshot(data []byte) {
 		kv.nextVersion = nextVersion
 		kv.nextConfig = nextConfig
 		kv.status = status
-		// kv.migrateSeq = migrateSeq
 	}
 }
