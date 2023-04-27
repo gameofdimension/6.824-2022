@@ -319,11 +319,9 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	if args.LastIncludedIndex >= rf.commitIndex {
 		DPrintf("%s, cover log and snapshot %d vs %d", prefix, args.LastIncludedIndex, rf.commitIndex)
-		rf.vlog = VirtualLog{
-			LastIncludedIndex: args.LastIncludedIndex,
-			LastIncludedTerm:  args.LastIncludedTerm,
-			Data:              make([]LogEntry, 0),
-		}
+		rf.vlog.LastIncludedIndex = args.LastIncludedIndex
+		rf.vlog.LastIncludedTerm = args.LastIncludedTerm
+		rf.vlog.Data = rf.vlog.Data[:0]
 		rf.snapshot = args.Data
 		rf.commitIndex = args.LastIncludedIndex
 	} else {

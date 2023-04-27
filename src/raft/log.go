@@ -27,6 +27,10 @@ func (vl *VirtualLog) isPrime() bool {
 }
 
 func (vl *VirtualLog) ApplySnapshot(index int) int {
+	// 防御式编程，是否可以避免这种情况待论述，但是 debug 过程中是有见过
+	if index <= vl.LastIncludedIndex {
+		return -1
+	}
 	paddr := vl.v2p(index)
 	vl.LastIncludedIndex = index
 	vl.LastIncludedTerm = vl.Data[paddr].Term

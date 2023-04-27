@@ -67,6 +67,10 @@ func (rf *Raft) prepareArgs(server int, roundId string) (bool, *AppendEntriesArg
 		return false, nil, ""
 	}
 
+	// 对 rf.log 可能存在并发修改的情形，这里防御一下
+	if rf.nextIndex[server]-1 < rf.vlog.GetLastIncludedIndex() {
+		return false, nil, ""
+	}
 	preLogIndex := rf.nextIndex[server] - 1
 	leaderNext := rf.vlog.NextIndex()
 	if rf.nextIndex[server] > leaderNext {
@@ -269,7 +273,7 @@ func (rf *Raft) tryUpdateCommitIndex(round int) int {
 
 func (rf *Raft) replicateWorker(server int) {
 	round := 0
-	for rf.killed() == false {
+	for rf.Killed() == false {
 		round += 1
 		roundId := fmt.Sprintf("%016d", round)
 		rf.mu.Lock()
@@ -295,7 +299,7 @@ func (rf *Raft) replicateWorker(server int) {
 
 func (rf *Raft) commitIndexWorker() {
 	round := 0
-	for rf.killed() == false {
+	for rf.Killed() == false {
 		round += 1
 		rf.tryUpdateCommitIndex(round)
 		time.Sleep(1 * time.Millisecond)
@@ -304,7 +308,7 @@ func (rf *Raft) commitIndexWorker() {
 
 func (rf *Raft) heartBeatWorker() {
 	round := 0
-	for rf.killed() == false {
+	for rf.Killed() == false {
 		round += 1
 		roundId := fmt.Sprintf("%016d", round)
 		rc := rf.sendHeartBeat(roundId)

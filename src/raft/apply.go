@@ -7,7 +7,7 @@ import (
 
 func (rf *Raft) applyLog() {
 	round := 0
-	for rf.killed() == false {
+	for rf.Killed() == false {
 		round += 1
 		rf.mu.Lock()
 		rc, newVal, msg := rf.nextToApply(round)

@@ -204,7 +204,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 	index := rf.vlog.NextIndex()
 	term := rf.currentTerm
-	if rf.killed() {
+	if rf.Killed() {
 		return index, term, false
 	}
 	isLeader := rf.role == RoleLeader
@@ -240,7 +240,7 @@ func (rf *Raft) Kill() {
 	defer rf.mu.Unlock()
 }
 
-func (rf *Raft) killed() bool {
+func (rf *Raft) Killed() bool {
 	z := atomic.LoadInt32(&rf.dead)
 	return z == 1
 }
@@ -270,7 +270,7 @@ func (rf *Raft) shouldStartElection() bool {
 // heartsbeats recently.
 func (rf *Raft) ticker() {
 	round := 0
-	for rf.killed() == false {
+	for rf.Killed() == false {
 
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using

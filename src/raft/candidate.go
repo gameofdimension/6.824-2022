@@ -72,7 +72,7 @@ func (rf *Raft) newSession(round int, args *RequestVoteArgs) int {
 
 	votes := 1
 	count := 1
-	for rf.killed() == false {
+	for rf.Killed() == false {
 		pn := len(rf.peers)
 		if count >= pn {
 			DPrintf("%s election fail", prefix)
