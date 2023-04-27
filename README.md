@@ -9,4 +9,4 @@ raft lab of mit 6.824, year 2022
 - [x] 3a
 - [x] 3b
 - [x] 4a
-- [ ] 4b
+- [x] 4b
