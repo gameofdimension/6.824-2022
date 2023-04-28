@@ -77,7 +77,7 @@ func (kv *ShardKV) applier() {
 
 func (kv *ShardKV) deleteShardData() {
 	// 要扫描所有数据，效率有点低
-	for k, _ := range kv.repo {
+	for k := range kv.repo {
 		if kv.status[key2shard(k)] == NotAssigned {
 			delete(kv.repo, k)
 		}
