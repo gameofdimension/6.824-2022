@@ -62,7 +62,7 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 		Seq:      args.Seq,
 	}
 	ret := sc.update(args.Id, args.Seq, op)
-	if ret != 0 {
+	if !ret {
 		reply.WrongLeader = true
 		return
 	}
@@ -89,7 +89,7 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 		Seq:      args.Seq,
 	}
 	ret := sc.update(args.Id, args.Seq, op)
-	if ret != 0 {
+	if !ret {
 		reply.WrongLeader = true
 		return
 	}
@@ -115,7 +115,7 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 		Seq:      args.Seq,
 	}
 	ret := sc.update(args.Id, args.Seq, op)
-	if ret != 0 {
+	if !ret {
 		reply.WrongLeader = true
 		return
 	}
@@ -144,19 +144,20 @@ func (sc *ShardCtrler) getCachedUpdate(id int64, seq int64) int {
 	return 1
 }
 
-func (sc *ShardCtrler) update(id int64, seq int64, op Op) int {
+func (sc *ShardCtrler) update(id int64, seq int64, op Op) bool {
 	index, term, isLeader := sc.rf.Start(op)
 	if !isLeader {
-		return -1
+		return false
 	}
-	for {
-		rc := sc.pollUpdate(term, index, id, seq)
-		if rc == 1 {
-			time.Sleep(1 * time.Millisecond)
-		} else {
-			return 0
+
+	for !sc.rf.Killed() {
+		stop, success := sc.pollAgreement(term, index, id, seq)
+		if stop {
+			return success
 		}
+		time.Sleep(1 * time.Millisecond)
 	}
+	return false
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
@@ -199,13 +200,27 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 		reply.WrongLeader = true
 		return
 	}
-	for {
-		rc := sc.pollGet(term, index, args.Id, args.Seq, reply)
-		if !rc {
+
+	for !sc.rf.Killed() {
+		stop, success := sc.pollAgreement(term, index, args.Id, args.Seq)
+		if !stop {
 			time.Sleep(1 * time.Millisecond)
-		} else {
-			return
+			continue
 		}
+		if !success {
+			reply.WrongLeader = true
+		} else {
+			sc.mu.Lock()
+			val := sc.cache[args.Id]
+			sc.mu.Unlock()
+			if val == nil {
+				reply.Err = ErrNoVersion
+			} else {
+				reply.Err = OK
+				reply.Config = val.(Config)
+			}
+		}
+		break
 	}
 }
 

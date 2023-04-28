@@ -135,53 +135,18 @@ func (sc *ShardCtrler) makeConfigForMove(args *MoveArgs) *Config {
 	return &config
 }
 
-func (sc *ShardCtrler) pollGet(term int, index int, clientId int64, seq int64, reply *QueryReply) bool {
+func (sc *ShardCtrler) pollAgreement(term int, index int, clientId int64, seq int64) (bool, bool) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	ct, cl := sc.rf.GetState()
 	if !cl || ct != term {
-		reply.WrongLeader = true
-		return true
+		return true, false
 	}
 	if sc.lastApplied < index {
-		return false
+		return false, false
 	}
 	if logSeq, ok := sc.clientSeq[clientId]; !ok || logSeq != seq {
-		reply.WrongLeader = true
-		return true
+		return true, false
 	}
-	val := sc.cache[clientId]
-
-	if val == nil {
-		reply.Err = ErrNoVersion
-		return true
-	}
-	reply.Err = OK
-	// reply.Value = val.(string)
-	reply.Config = val.(Config)
-	return true
-}
-
-func (sc *ShardCtrler) pollUpdate(term int, index int, clientId int64, seq int64) int {
-	DPrintf("server %d pollUpdate", sc.me)
-	ct, cl := sc.rf.GetState()
-	if !cl || ct != term {
-		// reply.Err = ErrWrongLeader
-		// return true
-		return -1
-	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if sc.lastApplied < index {
-		// return false
-		return 1
-	}
-	if logSeq, ok := sc.clientSeq[clientId]; !ok || logSeq != seq {
-		// reply.Err = ErrWrongLeader
-		// return true
-		return -1
-	}
-	// reply.Err = OK
-	// return true
-	return 0
+	return true, true
 }
