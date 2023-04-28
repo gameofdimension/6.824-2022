@@ -13,6 +13,7 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	}
 	return
 }
+
 func SliceContains(hs []int, n int) bool {
 	for _, v := range hs {
 		if v == n {
