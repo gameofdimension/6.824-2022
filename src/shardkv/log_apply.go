@@ -85,14 +85,13 @@ func (kv *ShardKV) deleteShardData() {
 }
 
 func (kv *ShardKV) dump(shard int) (map[string]string, map[int64]int64, map[int64]interface{}) {
-	DPrintf("server %d of group %d prepare shard %d to dump", kv.me, kv.gid, shard)
+	// ensure all pending logs applied
 	for !kv.rf.Killed() {
 		if kv.sendNoop() {
 			break
 		}
 		time.Sleep(31 * time.Millisecond)
 	}
-	DPrintf("server %d of group %d prepare shard %d to dump synced", kv.me, kv.gid, shard)
 	kv.mu.Lock()
 	tmp := make(map[string]string, 0)
 	for k, v := range kv.repo {
@@ -121,85 +120,6 @@ func (kv *ShardKV) merge(data map[string]string) {
 	}
 }
 
-func (kv *ShardKV) Migrate(args *DumpArgs, reply *DumpReply) {
-	if _, leader := kv.rf.GetState(); !leader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	kv.mu.Lock()
-	prefix := fmt.Sprintf("migrate handler %d of group %d with %d vs %d shard %d from %d seq %d, data %v",
-		kv.me, kv.gid, args.OldVersion, args.NewVersion, args.Shard, args.Id, args.Seq, args.ShardData)
-	DPrintf("%s start", prefix)
-	if !kv.isSwitching() {
-		DPrintf("%s not switching %d", prefix, kv.nextVersion)
-		reply.Err = ErrWrongVersion
-		kv.mu.Unlock()
-		return
-	}
-	// 为什么允许调用者进度落后，因为有可能调用者失败
-	// 而此时被调用方这边已经执行成功并顺利转到下个版本
-	// 调用者因为失败了会重试，如果要严格匹配的话，就永远卡在这里了
-	if args.NewVersion < kv.nextVersion {
-		reply.Err = OK
-		kv.mu.Unlock()
-		return
-	}
-	if args.NewVersion != kv.nextVersion {
-		DPrintf("%s version not match %d vs %d", prefix, args.NewVersion, kv.nextVersion)
-		reply.Err = ErrWrongVersion
-		kv.mu.Unlock()
-		return
-	}
-	if kv.status[args.Shard] == Ready {
-		reply.Err = OK
-		kv.mu.Unlock()
-		return
-	}
-	DPrintf("%s will merge data %d", prefix, len(args.ShardData))
-	if kv.nextConfig.Shards[args.Shard] != kv.gid {
-		panic(fmt.Sprintf("%s shard %d not data for me %d, %v", prefix, args.Shard, kv.gid, kv.nextConfig))
-	}
-	copy := map[string]string{}
-	for k := range args.ShardData {
-		copy[k] = args.ShardData[k]
-	}
-	copySeq := make(map[int64]int64)
-	for k, v := range args.LastClientSeq {
-		copySeq[k] = v
-	}
-	copyResult := make(map[int64]interface{})
-	for k, v := range args.LastClientResult {
-		copyResult[k] = v
-	}
-	clientId := args.Id
-	seq := args.Seq
-	kv.mu.Unlock()
-
-	shardData := ShardData{
-		Shard:            args.Shard,
-		Data:             copy,
-		LastClientSeq:    copySeq,
-		LastClientResult: copyResult,
-	}
-	op := Op{
-		Type:      OpMigrate,
-		ClientId:  clientId,
-		Seq:       seq,
-		ShardData: shardData,
-	}
-	index, term, isLeader := kv.rf.Start(op)
-	DPrintf("%s send migration to raft %d, %d, %t", prefix, index, term, isLeader)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	ok := kv.raftSyncOp(&op)
-	if ok {
-		reply.Err = OK
-	} else {
-		reply.Err = ErrWrongLeader
-	}
-}
 
 func (kv *ShardKV) pollAgreement(term int, index int, clientId int64, seq int64) (bool, bool) {
 	kv.mu.Lock()

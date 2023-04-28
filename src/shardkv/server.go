@@ -1,9 +1,7 @@
 package shardkv
 
 import (
-	"fmt"
 	"sync"
-	"time"
 
 	"6.824/labgob"
 	"6.824/labrpc"
@@ -38,6 +36,7 @@ type ShardData struct {
 	LastClientSeq    map[int64]int64
 	LastClientResult map[int64]interface{}
 }
+
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
@@ -78,149 +77,6 @@ type ShardKV struct {
 	nextConfig     shardctrler.Config
 	status         [shardctrler.NShards]ShardStatus
 	migrateSeq     int64
-}
-
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-	if _, leader := kv.rf.GetState(); !leader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	kv.mu.Lock()
-	prefix := fmt.Sprintf("get handler %d of group %d with args %v", kv.me, kv.gid, *args)
-	shard := key2shard(args.Key)
-	DPrintf("%s start with status %v", prefix, kv.status)
-	status := kv.GetShardStatus(shard)
-	if status != Ready {
-		reply.Err = ErrWrongGroup
-		DPrintf("%s shard %d status not ready %v", prefix, shard, kv.status)
-		kv.mu.Unlock()
-		return
-	}
-	DPrintf("%s try get from cache", prefix)
-	lastSeq, ok := kv.clientSeq[args.Id]
-	if ok {
-		if args.Seq < lastSeq {
-			panic(fmt.Sprintf("Get seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
-		}
-		if args.Seq == lastSeq {
-			if val, ok := kv.cache[args.Id]; !ok {
-				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
-			} else {
-				if val != nil {
-					reply.Err = OK
-					reply.Value = val.(string)
-				} else {
-					reply.Err = ErrNoKey
-				}
-			}
-			kv.mu.Unlock()
-			return
-		}
-	}
-	kv.mu.Unlock()
-
-	op := Op{
-		Type:     OpGet,
-		Key:      args.Key,
-		ClientId: args.Id,
-		Seq:      args.Seq,
-	}
-	DPrintf("%s send to raft", prefix)
-	index, term, isLeader := kv.rf.Start(op)
-	if !isLeader {
-		DPrintf("%s not leader", prefix)
-		reply.Err = ErrWrongLeader
-		return
-	}
-	for !kv.rf.Killed() {
-		stop, success := kv.pollAgreement(term, index, args.Id, args.Seq)
-		if !stop {
-			time.Sleep(1 * time.Millisecond)
-			continue
-		}
-		if !success {
-			reply.Err = ErrWrongLeader
-		} else {
-			kv.mu.Lock()
-			val := kv.cache[args.Id]
-			kv.mu.Unlock()
-			if val == nil {
-				reply.Err = ErrNoKey
-			} else {
-				reply.Err = OK
-				reply.Value = val.(string)
-			}
-		}
-		break
-	}
-}
-
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-	if _, leader := kv.rf.GetState(); !leader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	kv.mu.Lock()
-	prefix := fmt.Sprintf("put handler %d of group %d with args %v", kv.me, kv.gid, *args)
-	shard := key2shard(args.Key)
-	status := kv.GetShardStatus(shard)
-	DPrintf("%s start with status %v", prefix, kv.status)
-	if status != Ready {
-		reply.Err = ErrWrongGroup
-		DPrintf("%s shard %d status not ready %v", prefix, shard, kv.status)
-		kv.mu.Unlock()
-		return
-	}
-	DPrintf("%s try get from cache", prefix)
-	lastSeq, ok := kv.clientSeq[args.Id]
-	if ok {
-		if args.Seq < lastSeq {
-			panic(fmt.Sprintf("PutAppend seq of %d out of order [%d vs %d]", args.Id, args.Seq, kv.clientSeq[args.Id]))
-		}
-		if args.Seq == lastSeq {
-			if val, ok := kv.cache[args.Id]; !ok || !val.(bool) {
-				panic(fmt.Sprintf("impossible cache value %t %t", ok, val.(bool)))
-			}
-			reply.Err = OK
-			kv.mu.Unlock()
-			return
-		}
-	}
-	kv.mu.Unlock()
-
-	opType := OpPut
-	if args.Op == "Append" {
-		opType = OpAppend
-	}
-	op := Op{
-		Type:     OpType(opType),
-		Key:      args.Key,
-		Value:    args.Value,
-		ClientId: args.Id,
-		Seq:      args.Seq,
-	}
-	DPrintf("%s send to raft", prefix)
-	index, term, isLeader := kv.rf.Start(op)
-	if !isLeader {
-		DPrintf("%s not leader", prefix)
-		reply.Err = ErrWrongLeader
-		return
-	}
-	for !kv.rf.Killed() {
-		stop, success := kv.pollAgreement(term, index, args.Id, args.Seq)
-		if !stop {
-			time.Sleep(1 * time.Millisecond)
-			continue
-		}
-		if !success {
-			reply.Err = ErrWrongLeader
-		} else {
-			reply.Err = OK
-		}
-		break
-	}
 }
 
 // the tester calls Kill() when a ShardKV instance won't
