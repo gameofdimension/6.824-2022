@@ -35,6 +35,22 @@ func (kv *ShardKV) raftSyncOp(op *Op) bool {
 	return false
 }
 
+func (kv *ShardKV) raftSyncConfig(change *ConfigChange) bool {
+	kv.mu.Lock()
+	clientId := kv.id
+	kv.migrateSeq += 1
+	seq := kv.migrateSeq
+	kv.mu.Unlock()
+
+	op := Op{
+		Type:     OpConfig,
+		ClientId: clientId,
+		Seq:      seq,
+		Change:   *change,
+	}
+	return kv.raftSyncOp(&op)
+}
+
 // 根据课程说明要求失去 shard 的 group 发送数据，而不是得到 shard 的拉取数据
 func (kv *ShardKV) updateConfig(config *shardctrler.Config) {
 	kv.mu.Lock()
@@ -50,10 +66,6 @@ func (kv *ShardKV) updateConfig(config *shardctrler.Config) {
 				status[i] = NotAssigned
 			}
 		}
-
-		clientId := kv.id
-		kv.migrateSeq += 1
-		seq := kv.migrateSeq
 		kv.mu.Unlock()
 
 		change := ConfigChange{
@@ -62,13 +74,7 @@ func (kv *ShardKV) updateConfig(config *shardctrler.Config) {
 			NextVersion:    0,
 			Status:         status,
 		}
-		op := Op{
-			Type:     OpConfig,
-			ClientId: clientId,
-			Seq:      seq,
-			Change:   change,
-		}
-		ok := kv.raftSyncOp(&op)
+		ok := kv.raftSyncConfig(&change)
 		DPrintf("%s sync init change to raft ok? %t", prefix, ok)
 		return
 	}
@@ -99,20 +105,7 @@ func (kv *ShardKV) updateConfig(config *shardctrler.Config) {
 		NextConfig:     newConfig,
 		Status:         status,
 	}
-
-	kv.mu.Lock()
-	clientId := kv.id
-	kv.migrateSeq += 1
-	seq := kv.migrateSeq
-	kv.mu.Unlock()
-
-	op := Op{
-		Type:     OpConfig,
-		ClientId: clientId,
-		Seq:      seq,
-		Change:   change,
-	}
-	ok := kv.raftSyncOp(&op)
+	ok := kv.raftSyncConfig(&change)
 	DPrintf("%s sync change switching [%d->%d] to raft ok? %t", prefix, kv.currentVersion, newVersion, ok)
 }
 
@@ -223,24 +216,13 @@ func (kv *ShardKV) configFetcher() {
 				}
 				kv.mu.Unlock()
 				if switchDone {
-					kv.mu.Lock()
-					clientId := kv.id
-					kv.migrateSeq += 1
-					seq := kv.migrateSeq
-					kv.mu.Unlock()
 					change := ConfigChange{
 						CurrentVersion: kv.nextVersion,
 						CurrentConfig:  kv.nextConfig,
 						NextVersion:    0,
 						Status:         kv.status,
 					}
-					op := Op{
-						Type:     OpConfig,
-						ClientId: clientId,
-						Seq:      seq,
-						Change:   change,
-					}
-					ok := kv.raftSyncOp(&op)
+					ok := kv.raftSyncConfig(&change)
 					kv.mu.Lock()
 					DPrintf("%s sync change switched [%d->%d] to raft ok? %t", prefix, kv.currentVersion, kv.nextVersion, ok)
 					kv.mu.Unlock()
@@ -278,20 +260,7 @@ func (kv *ShardKV) tryMigrateShards() {
 			NextConfig:     kv.nextConfig,
 			Status:         status,
 		}
-
-		kv.mu.Lock()
-		clientId := kv.id
-		kv.migrateSeq += 1
-		seq := kv.migrateSeq
-		kv.mu.Unlock()
-
-		op := Op{
-			Type:     OpConfig,
-			ClientId: clientId,
-			Seq:      seq,
-			Change:   change,
-		}
-		ok := kv.raftSyncOp(&op)
+		ok := kv.raftSyncConfig(&change)
 		kv.mu.Lock()
 		DPrintf("%s sync change migration [%d->%d] to raft ok? %t", prefix, kv.currentVersion, kv.nextVersion, ok)
 		kv.mu.Unlock()
