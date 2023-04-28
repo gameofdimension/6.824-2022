@@ -44,8 +44,9 @@ func (kv *ShardKV) applier() {
 					kv.repo[op.Key] = kv.repo[op.Key] + op.Value
 					kv.cache[clientId] = true
 				} else if op.Type == OpConfig {
-					DPrintf("server %d,%d of group %d apply config change [%d,%d]->[%d,%d], status %v", kv.me, kv.id, kv.gid,
-						kv.currentVersion, kv.nextVersion, op.Change.CurrentVersion, op.Change.NextVersion, op.Change.Status)
+					DPrintf("server %d,%d of group %d apply config change [%d,%d]->[%d,%d], status %v",
+						kv.me, kv.id, kv.gid, kv.currentVersion, kv.nextVersion, op.Change.CurrentVersion,
+						op.Change.NextVersion, op.Change.Status)
 					kv.currentVersion = op.Change.CurrentVersion
 					kv.currentConfig = op.Change.CurrentConfig
 					kv.nextVersion = op.Change.NextVersion
@@ -214,51 +215,6 @@ func (kv *ShardKV) pollAgreement(term int, index int, clientId int64, seq int64)
 		return true, false
 	}
 	return true, true
-}
-
-func (kv *ShardKV) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	ct, cl := kv.rf.GetState()
-	if !cl || ct != term {
-		reply.Err = ErrWrongLeader
-		return true
-	}
-	if kv.lastApplied < index {
-		return false
-	}
-	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
-		reply.Err = ErrWrongLeader
-		return true
-	}
-	val := kv.cache[clientId]
-
-	if val == nil {
-		reply.Err = ErrNoKey
-		return true
-	}
-	reply.Err = OK
-	reply.Value = val.(string)
-	return true
-}
-
-func (kv *ShardKV) pollPutAppend(term int, index int, clientId int64, seq int64, reply *PutAppendReply) bool {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	ct, cl := kv.rf.GetState()
-	if !cl || ct != term {
-		reply.Err = ErrWrongLeader
-		return true
-	}
-	if kv.lastApplied < index {
-		return false
-	}
-	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
-		reply.Err = ErrWrongLeader
-		return true
-	}
-	reply.Err = OK
-	return true
 }
 
 func (kv *ShardKV) makeSnapshot() []byte {

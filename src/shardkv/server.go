@@ -31,8 +31,10 @@ type ConfigChange struct {
 }
 
 type ShardData struct {
-	Shard            int
-	Data             map[string]string
+	Shard int
+	Data  map[string]string
+
+	// 以下两个字段用来在数据迁移前后检测重复请求
 	LastClientSeq    map[int64]int64
 	LastClientResult map[int64]interface{}
 }
@@ -131,13 +133,26 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
-	for {
-		rc := kv.pollGet(term, index, args.Id, args.Seq, reply)
-		if !rc {
+	for !kv.rf.Killed() {
+		stop, success := kv.pollAgreement(term, index, args.Id, args.Seq)
+		if !stop {
 			time.Sleep(1 * time.Millisecond)
-		} else {
-			return
+			continue
 		}
+		if !success {
+			reply.Err = ErrWrongLeader
+		} else {
+			kv.mu.Lock()
+			val := kv.cache[args.Id]
+			kv.mu.Unlock()
+			if val == nil {
+				reply.Err = ErrNoKey
+			} else {
+				reply.Err = OK
+				reply.Value = val.(string)
+			}
+		}
+		break
 	}
 }
 
@@ -193,13 +208,18 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
-	for {
-		rc := kv.pollPutAppend(term, index, args.Id, args.Seq, reply)
-		if !rc {
+	for !kv.rf.Killed() {
+		stop, success := kv.pollAgreement(term, index, args.Id, args.Seq)
+		if !stop {
 			time.Sleep(1 * time.Millisecond)
-		} else {
-			return
+			continue
 		}
+		if !success {
+			reply.Err = ErrWrongLeader
+		} else {
+			reply.Err = OK
+		}
+		break
 	}
 }
 
