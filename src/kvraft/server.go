@@ -106,30 +106,20 @@ func (kv *KVServer) applier() {
 	}
 }
 
-func (kv *KVServer) pollGet(term int, index int, clientId int64, seq int64, reply *GetReply) bool {
+func (kv *KVServer) pollAgreement(term int, index int, clientId int64, seq int64) (bool, bool) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	ct, cl := kv.rf.GetState()
 	if !cl || ct != term {
-		reply.Err = ErrWrongLeader
-		return true
+		return true, false
 	}
 	if kv.lastApplied < index {
-		return false
+		return false, false
 	}
 	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
-		reply.Err = ErrWrongLeader
-		return true
+		return true, false
 	}
-	val := kv.cache[clientId]
-
-	if val == nil {
-		reply.Err = ErrNoKey
-		return true
-	}
-	reply.Err = OK
-	reply.Value = val.(string)
-	return true
+	return true, true
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -172,33 +162,27 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
-	for kv.killed() == false {
-		rc := kv.pollGet(term, index, args.Id, args.Seq, reply)
-		if !rc {
+	for !kv.killed() {
+		stop, success := kv.pollAgreement(term, index, args.Id, args.Seq)
+		if !stop {
 			time.Sleep(1 * time.Millisecond)
-		} else {
-			return
+			continue
 		}
+		if !success {
+			reply.Err = ErrWrongLeader
+		} else {
+			kv.mu.Lock()
+			val := kv.cache[args.Id]
+			kv.mu.Unlock()
+			if val == nil {
+				reply.Err = ErrNoKey
+			} else {
+				reply.Err = OK
+				reply.Value = val.(string)
+			}
+		}
+		return
 	}
-}
-
-func (kv *KVServer) pollPutAppend(term int, index int, clientId int64, seq int64, reply *PutAppendReply) bool {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	ct, cl := kv.rf.GetState()
-	if !cl || ct != term {
-		reply.Err = ErrWrongLeader
-		return true
-	}
-	if kv.lastApplied < index {
-		return false
-	}
-	if logSeq, ok := kv.clientSeq[clientId]; !ok || logSeq != seq {
-		reply.Err = ErrWrongLeader
-		return true
-	}
-	reply.Err = OK
-	return true
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -240,13 +224,18 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
-	for kv.killed() == false {
-		rc := kv.pollPutAppend(term, index, args.Id, args.Seq, reply)
-		if !rc {
+	for !kv.killed() {
+		stop, success := kv.pollAgreement(term, index, args.Id, args.Seq)
+		if !stop {
 			time.Sleep(1 * time.Millisecond)
-		} else {
-			return
+			continue
 		}
+		if !success {
+			reply.Err = ErrWrongLeader
+		} else {
+			reply.Err = OK
+		}
+		return
 	}
 }
 
