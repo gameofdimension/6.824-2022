@@ -120,7 +120,6 @@ func (kv *ShardKV) merge(data map[string]string) {
 	}
 }
 
-
 func (kv *ShardKV) pollAgreement(term int, index int, clientId int64, seq int64) (bool, bool) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
