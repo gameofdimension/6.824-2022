@@ -27,7 +27,7 @@ func (sc *ShardCtrler) applier() {
 				if op.Type == OpQuery {
 					args := op.Args.(QueryArgs)
 					version := args.Num
-					if version == -1 || version >= len(sc.configs) {
+					if version == -1 {
 						version = len(sc.configs) - 1
 					}
 					if version < len(sc.configs) && version > 0 {
