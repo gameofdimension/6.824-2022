@@ -17,7 +17,14 @@ func (p PairList) Less(i, j int) bool {
 	if len(p[i].Value) != len(p[j].Value) {
 		return len(p[i].Value) < len(p[j].Value)
 	}
-	return p[i].Key < p[j].Key
+	// 考虑一种情况：
+	// 一系列 join 和 leave 操作之后，shards 内容变成 [5 10 9 8 7 6 4 3 2 1]
+	// 如果此时再 join 一个 gid=11，显然 11 不该出现在 shards 中，同时 shards
+	// 也不应该有任何改变
+	// 而之前的比较函数 p[i].Key < p[j].Key 只能够保证排序稳定，保证不了上述情况下
+	// 的 shards 不变，相反 shards 会变成 [10 9 8 7 6 5 4 3 2 1]
+	// return p[i].Key < p[j].Key
+	return p[i].Value[0] > p[j].Value[0]
 }
 func (p PairList) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
 

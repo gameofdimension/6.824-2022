@@ -2,6 +2,7 @@ package shardctrler
 
 import (
 	"fmt"
+	"sort"
 )
 
 func (sc *ShardCtrler) applier() {
@@ -26,7 +27,7 @@ func (sc *ShardCtrler) applier() {
 				if op.Type == OpQuery {
 					args := op.Args.(QueryArgs)
 					version := args.Num
-					if version == -1 {
+					if version == -1 || version >= len(sc.configs) {
 						version = len(sc.configs) - 1
 					}
 					if version < len(sc.configs) && version > 0 {
@@ -37,21 +38,19 @@ func (sc *ShardCtrler) applier() {
 				} else if op.Type == OpJoin {
 					args := op.Args.(JoinArgs)
 					config := sc.makeConfigForJoin(&args)
-					DPrintf("server %d latest config after join %v", sc.me, config)
-					if config != nil {
-						sc.configs = append(sc.configs, *config)
-					}
+					DPrintf("server %d latest config after join version %d shards %v", sc.me, config.Num, config.Shards)
+					sc.configs = append(sc.configs, *config)
 					sc.cache[clientId] = true
 				} else if op.Type == OpLeave {
 					args := op.Args.(LeaveArgs)
 					config := sc.makeConfigForLeave(&args)
-					DPrintf("server %d latest config after leave %v", sc.me, config)
+					DPrintf("server %d latest config after leave version %d shards %v", sc.me, config.Num, config.Shards)
 					sc.configs = append(sc.configs, *config)
 					sc.cache[clientId] = true
 				} else if op.Type == OpMove {
 					args := op.Args.(MoveArgs)
 					config := sc.makeConfigForMove(&args)
-					DPrintf("server %d latest config after move %v", sc.me, config)
+					DPrintf("server %d latest config after move version %d shards %v", sc.me, config.Num, config.Shards)
 					sc.configs = append(sc.configs, *config)
 					sc.cache[clientId] = true
 				}
@@ -60,7 +59,6 @@ func (sc *ShardCtrler) applier() {
 			sc.mu.Unlock()
 		}
 	}
-
 }
 
 func (sc *ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
@@ -78,6 +76,9 @@ func (sc *ShardCtrler) makeConfigForJoin(args *JoinArgs) *Config {
 	for k := range groups {
 		finalGids = append(finalGids, k)
 	}
+	sort.Slice(finalGids, func(i, j int) bool {
+		return finalGids[i] < finalGids[j]
+	})
 
 	shards := add(last.Shards[:], finalGids)
 	config := Config{
@@ -99,6 +100,9 @@ func (sc *ShardCtrler) makeConfigForLeave(args *LeaveArgs) *Config {
 			finalGids = append(finalGids, k)
 		}
 	}
+	sort.Slice(finalGids, func(i, j int) bool {
+		return finalGids[i] < finalGids[j]
+	})
 	shards := remove(last.Shards[:], finalGids)
 	config := Config{
 		Num:    version,
